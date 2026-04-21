@@ -55,7 +55,7 @@ class SmartVoyagePrompts:
             }
 
         支持的意图类型：
-            weather / flight / train / concert / order / attraction / out_of_scope
+            weather / flight / train / concert / order / car_rental / tour_group / insurance / trip_order / attraction / out_of_scope
         """
         return ChatPromptTemplate.from_template(
 """
@@ -63,7 +63,7 @@ class SmartVoyagePrompts:
 角色：您是一个专业的旅行意图识别专家，
 任务：基于用户查询、对话历史和用户偏好，识别其意图，用于调用专门的agent server来执行；为方便后续的agent server处理，可以基于对话历史对用户查询进行改写，使问题更明确。
 严格遵守规则：
-- 支持意图：['weather' (天气查询), 'flight' (机票查询), 'train' (高铁/火车票查询), 'concert' (演唱会票查询), 'order' (票务预定), 'attraction' (景点推荐)] 或其组合（如 ['weather', 'flight']）。如果意图超出范围，返回意图 'out_of_scope'。
+- 支持意图：['weather' (天气查询), 'flight' (机票查询), 'train' (高铁/火车票查询), 'concert' (演唱会票查询), 'order' (票务预定), 'car_rental' (租车查询), 'tour_group' (旅游团查询), 'insurance' (保险查询), 'trip_order' (行程预订), 'attraction' (景点推荐)] 或其组合（如 ['weather', 'flight']）。如果意图超出范围，返回意图 'out_of_scope'。
 - 注意票务预定和票务查询要区分开，涉及到订票时则为order，只是查询则为flight、train或concert。
 - 在进行用户查询改写时，如果对话历史中有关键信息（如出发城市、到达城市、日期），可以补充到当前查询中，使问题更完整。
 - 如果用户的意图很不明确或者有歧义，可以向其进行追问，将追问问题填充到follow_up_message中。

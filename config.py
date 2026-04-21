@@ -50,11 +50,15 @@ class Config:
         self.url_123 = ""
 
         self.intent = {
-            "weather":"WeatherQueryAssistant",
-            "flight":"TicketQueryAssistant",
-            "train":"TicketQueryAssistant",
-            "concert":"TicketQueryAssistant",
-            "order":"TicketAssistant"
+            "weather": "WeatherQueryAssistant",
+            "flight": "TicketQueryAssistant",
+            "train": "TicketQueryAssistant",
+            "concert": "TicketQueryAssistant",
+            "order": "TicketAssistant",
+            "car_rental": "TripAssistant",
+            "tour_group": "TripAssistant",
+            "insurance": "TripAssistant",
+            "trip_order": "TripAssistant",
         }
 
         self.temperature = 0.1

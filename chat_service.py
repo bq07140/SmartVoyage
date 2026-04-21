@@ -77,13 +77,15 @@ class ChatService:
         # 记录每个子代理的访问地址
         self.agent_urls = {
             "WeatherQueryAssistant": "http://localhost:5005",  # 天气查询代理的地址
-            "TicketAssistant": "http://localhost:5006"         # 票务代理的地址
+            "TicketAssistant": "http://localhost:5006",        # 票务代理的地址
+            "TripAssistant": "http://localhost:5007"           # 行程管家代理的地址
         }
         # 创建代理网络实例，给它起个名字
         self.agent_network = AgentNetwork(name="旅行助手网络")
-        # 向网络中注册两个子代理（名字 + 地址）
+        # 向网络中注册子代理（名字 + 地址）
         self.agent_network.add("WeatherQueryAssistant", "http://localhost:5005")
         self.agent_network.add("TicketAssistant", "http://localhost:5006")
+        self.agent_network.add("TripAssistant", "http://localhost:5007")
 
         # ========== 2. 初始化大模型连接 ==========
         # 使用 LangChain 的 ChatOpenAI 接口连接大模型
@@ -134,7 +136,8 @@ class ChatService:
             self._available_tools_text = (
                 "- WeatherQueryAssistant: 查询天气信息\n"
                 "- TicketQueryAssistant: 查询票务信息（机票/高铁票/演唱会票）\n"
-                "- TicketAssistant: 预定票务"
+                "- TicketAssistant: 预定票务\n"
+                "- TripAssistant: 行程管家（租车/旅游团/保险的查询与预订）"
             )
         return self._available_tools_text
 
@@ -263,7 +266,7 @@ class ChatService:
         elif agent_name:
             # 对于票务查询类意图，提取关键实体（城市、日期等）保存到记忆中
             # 这样后续对话可以引用这些实体（多轮对话场景）
-            if intent in ["flight", "train", "concert"]:
+            if intent in ["flight", "train", "concert", "car_rental", "tour_group", "insurance"]:
                 self.memory.extract_entities(intent, query_str)
                 self.memory.update_task_context({"type": intent, "query": query_str})
 
@@ -306,6 +309,9 @@ class ChatService:
                 chain = SmartVoyagePrompts.summarize_weather_prompt() | self.llm
                 return chain.invoke({"query": query_str, "raw_response": agent_result}).content.strip()
             elif agent_name == "TicketQueryAssistant":
+                chain = SmartVoyagePrompts.summarize_ticket_prompt() | self.llm
+                return chain.invoke({"query": query_str, "raw_response": agent_result}).content.strip()
+            elif agent_name == "TripAssistant":
                 chain = SmartVoyagePrompts.summarize_ticket_prompt() | self.llm
                 return chain.invoke({"query": query_str, "raw_response": agent_result}).content.strip()
             else:
