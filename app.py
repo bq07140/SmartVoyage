@@ -77,13 +77,13 @@ if "agent_network" not in st.session_state:
     st.session_state.agent_urls = {
         "WeatherQueryAssistant": "http://localhost:5005",
         "TicketQueryAssistant": "http://localhost:5006",
-        "TicketOrderAssistant": "http://localhost:5007"
+        "TicketAssistant": "http://localhost:5006"
     }
     # 初始化网络
     network = AgentNetwork(name="Travel Assistant Network")
     network.add("WeatherQueryAssistant", "http://localhost:5005")
     network.add("TicketQueryAssistant", "http://localhost:5006")
-    network.add("TicketOrderAssistant", "http://localhost:5007")
+    network.add("TicketAssistant", "http://localhost:5006")
     st.session_state.agent_network = network
     # 加载配置并创建LLM
     st.session_state.llm = ChatOpenAI(
@@ -173,7 +173,7 @@ with col1:
                         elif intent in ["flight", "train", "concert"]:
                             agent_name = "TicketQueryAssistant"
                         elif intent == "order":
-                            agent_name = "TicketOrderAssistant"
+                            agent_name = "TicketAssistant"
                         else:
                             agent_name = None
 

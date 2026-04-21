@@ -44,13 +44,13 @@ def initialize_system():
     agent_urls = {
         "WeatherQueryAssistant": "http://localhost:5005",  # 天气代理URL
         "TicketQueryAssistant": "http://localhost:5006",  # 票务代理URL
-        "TicketOrderAssistant": "http://localhost:5007" # 票务预定URL
+        "TicketAssistant": "http://localhost:5006" # 统一票务代理
     }
     # 创建代理网络
     network = AgentNetwork(name="旅行助手网络")
     network.add("WeatherQueryAssistant", "http://localhost:5005")
     network.add("TicketQueryAssistant", "http://localhost:5006")
-    network.add("TicketOrderAssistant", "http://localhost:5007")
+    network.add("TicketAssistant", "http://localhost:5006")
     agent_network = network
 
     # 加载配置并创建LLM
@@ -130,7 +130,7 @@ def process_user_input(prompt):
                 # elif intent in ["flight", "train", "concert"]:
                 #     agent_name = "TicketQueryAssistant"
                 # elif intent == "order":
-                #     agent_name = "TicketOrderAssistant"
+                #     agent_name = "TicketAssistant"
                 # else:
                 #     agent_name = None
 

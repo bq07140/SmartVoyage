@@ -54,7 +54,7 @@ class Config:
             "flight":"TicketQueryAssistant",
             "train":"TicketQueryAssistant",
             "concert":"TicketQueryAssistant",
-            "order":"TicketOrderAssistant"
+            "order":"TicketAssistant"
         }
 
         self.temperature = 0.1

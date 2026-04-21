@@ -1,12 +1,12 @@
 """
-需求：实现基于MCP的票务查询服务器，提供火车票、机票和演唱会票的SQL查询功能
+需求：实现基于MCP的票务查询与预定服务器，提供火车票、机票和演唱会票的查询及预定功能
 思路步骤：
 1. 导入必要的模块和库
 2. 初始化配置和日志记录器
 3. 创建TicketService类（封装数据库操作逻辑）
-4. 实现execute_query方法（执行SQL查询并返回JSON结果）
-5. 创建create_ticket_mcp_server函数（创建MCP服务器）
-6. 定义query_tickets工具（处理票务查询请求）
+4. 实现参数化查询方法（query_train、query_flight、query_concert）
+5. 定义三个票务预定工具函数
+6. 创建create_ticket_mcp_server函数（创建MCP服务器，注册所有工具）
 7. 主函数（启动MCP服务器）
 """
 import mysql.connector
@@ -21,10 +21,10 @@ from SmartVoyage.utils.format import DateEncoder, default_encoder
 
 conf = Config()
 
+
 # 票务服务类
-class TicketService:  # 定义票务服务类，封装数据库操作逻辑
-    def __init__(self):  # 初始化方法，建立数据库连接
-        # 连接数据库
+class TicketService:
+    def __init__(self):
         self.conn = mysql.connector.connect(
             host=conf.host,
             user=conf.user,
@@ -32,32 +32,66 @@ class TicketService:  # 定义票务服务类，封装数据库操作逻辑
             database=conf.database
         )
 
-    # 定义执行SQL查询方法，输入SQL字符串，返回JSON字符串
-    def execute_query(self, sql: str) -> str:
+    # 执行SQL查询，返回JSON字符串
+    def _execute_query(self, sql: str, params: list = None) -> str:
         try:
             cursor = self.conn.cursor(dictionary=True)
-            cursor.execute(sql)
+            cursor.execute(sql, params or [])
             results = cursor.fetchall()
             cursor.close()
             # 格式化结果
-            for result in results:  # 遍历每个结果字典
+            for result in results:
                 for key, value in result.items():
-                    if isinstance(value, (date, datetime, timedelta, Decimal)):  # 检查值是否为特殊类型
-                        result[key] = default_encoder(value)  # 使用自定义编码器格式化该值
-            # 序列化为JSON，如果有结果返回success，否则no_data；使用DateEncoder，非ASCII不转义
-            return json.dumps({"status": "success", "data": results} if results else {"status": "no_data",
-                                                                                      "message": "未找到票务数据，请确认查询条件。"},
-                              cls=DateEncoder, ensure_ascii=False)
+                    if isinstance(value, (date, datetime, timedelta, Decimal)):
+                        result[key] = default_encoder(value)
+            return json.dumps(
+                {"status": "success", "data": results} if results
+                else {"status": "no_data", "message": "未找到票务数据，请确认查询条件。"},
+                cls=DateEncoder, ensure_ascii=False
+            )
         except Exception as e:
             logger.error(f"票务查询错误: {str(e)}")
-            # 返回错误JSON响应
             return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
+
+    # 查询火车票
+    def query_train(self, departure_city: str, arrival_city: str, date: str, seat_type: str = None) -> str:
+        sql = ("SELECT id, departure_city, arrival_city, departure_time, arrival_time, "
+               "train_number, seat_type, price, remaining_seats FROM train_tickets "
+               "WHERE departure_city = %s AND arrival_city = %s AND DATE(departure_time) = %s")
+        params = [departure_city, arrival_city, date]
+        if seat_type:
+            sql += " AND seat_type = %s"
+            params.append(seat_type)
+        return self._execute_query(sql, params)
+
+    # 查询机票
+    def query_flight(self, departure_city: str, arrival_city: str, date: str, cabin_type: str = None) -> str:
+        sql = ("SELECT id, departure_city, arrival_city, departure_time, arrival_time, "
+               "flight_number, cabin_type, price, remaining_seats FROM flight_tickets "
+               "WHERE departure_city = %s AND arrival_city = %s AND DATE(departure_time) = %s")
+        params = [departure_city, arrival_city, date]
+        if cabin_type:
+            sql += " AND cabin_type = %s"
+            params.append(cabin_type)
+        return self._execute_query(sql, params)
+
+    # 查询演唱会票
+    def query_concert(self, city: str, artist: str, date: str, ticket_type: str = None) -> str:
+        sql = ("SELECT id, artist, city, venue, start_time, end_time, "
+               "ticket_type, price, remaining_seats FROM concert_tickets "
+               "WHERE city = %s AND artist = %s AND DATE(start_time) = %s")
+        params = [city, artist, date]
+        if ticket_type:
+            sql += " AND ticket_type = %s"
+            params.append(ticket_type)
+        return self._execute_query(sql, params)
+
 
 # 创建票务MCP服务器
 def create_ticket_mcp_server():
     # 创建FastMCP实例
     ticket_mcp = FastMCP(name="TicketTools",
-                         instructions="票务查询工具，基于 train_tickets, flight_tickets, concert_tickets 表。只支持查询。",
+                         instructions="票务查询与预定工具，基于 train_tickets, flight_tickets, concert_tickets 表。支持查询和预定。",
                          log_level="ERROR",
                          host="127.0.0.1", port=8001)
 
@@ -65,12 +99,55 @@ def create_ticket_mcp_server():
     service = TicketService()
 
     @ticket_mcp.tool(
-        name="query_tickets",
-        description="查询票务数据，输入 SQL，如 'SELECT * FROM train_tickets WHERE departure_city = \"北京\" AND arrival_city = \"上海\"'"
+        name="query_train",
+        description="查询火车票，参数：departure_city(出发城市), arrival_city(到达城市), date(日期，格式YYYY-MM-DD), seat_type(座位类型，可选)"
     )
-    def query_tickets(sql: str) -> str:
-        logger.info(f"执行票务查询: {sql}")
-        return service.execute_query(sql)
+    def query_train(departure_city: str, arrival_city: str, date: str, seat_type: str = None) -> str:
+        logger.info(f"查询火车票: {departure_city} -> {arrival_city}, {date}, {seat_type}")
+        return service.query_train(departure_city, arrival_city, date, seat_type)
+
+    @ticket_mcp.tool(
+        name="query_flight",
+        description="查询机票，参数：departure_city(出发城市), arrival_city(到达城市), date(日期，格式YYYY-MM-DD), cabin_type(舱位类型，可选)"
+    )
+    def query_flight(departure_city: str, arrival_city: str, date: str, cabin_type: str = None) -> str:
+        logger.info(f"查询机票: {departure_city} -> {arrival_city}, {date}, {cabin_type}")
+        return service.query_flight(departure_city, arrival_city, date, cabin_type)
+
+    @ticket_mcp.tool(
+        name="query_concert",
+        description="查询演唱会票，参数：city(城市), artist(艺人), date(日期，格式YYYY-MM-DD), ticket_type(票类型，可选)"
+    )
+    def query_concert(city: str, artist: str, date: str, ticket_type: str = None) -> str:
+        logger.info(f"查询演唱会票: {city}, {artist}, {date}, {ticket_type}")
+        return service.query_concert(city, artist, date, ticket_type)
+
+    @ticket_mcp.tool(
+        name="order_train",
+        description="根据时间、车次、座位类型、数量预定火车票"
+    )
+    def order_train(departure_date: str, train_number: str, seat_type: str, number: int) -> str:
+        logger.info(f"正在订购火车票: {departure_date}, {train_number}, {seat_type}, {number}")
+        logger.info(f"恭喜，火车票预定成功！")
+        return "恭喜，火车票预定成功！"
+
+    @ticket_mcp.tool(
+        name="order_flight",
+        description="根据时间、班次、座位类型、数量预定飞机票"
+    )
+    def order_flight(departure_date: str, flight_number: str, seat_type: str, number: int) -> str:
+        logger.info(f"正在订购飞机票: {departure_date}, {flight_number}, {seat_type}, {number}")
+        logger.info(f"恭喜，飞机票预定成功！")
+        return "恭喜，飞机票预定成功！"
+
+    @ticket_mcp.tool(
+        name="order_concert",
+        description="根据时间、明星、场地、座位类型、数量预定演出票"
+    )
+    def order_concert(start_date: str, aritist: str, venue: str, seat_type: str, number: int) -> str:
+        logger.info(f"正在订购演出票: {start_date}, {aritist}, {venue}, {seat_type}, {number}")
+        logger.info(f"恭喜，演出票预定成功！")
+        return "恭喜，演出票预定成功！"
 
     # 打印服务器信息
     logger.info("=== 票务MCP服务器信息 ===")
@@ -80,9 +157,10 @@ def create_ticket_mcp_server():
     # 运行服务器
     try:
         print("服务器已启动，请访问 http://127.0.0.1:8001/mcp")
-        ticket_mcp.run(transport="streamable-http")  # 使用 streamable-http 传输方式
+        ticket_mcp.run(transport="streamable-http")
     except Exception as e:
         print(f"服务器启动失败: {e}")
+
 
 if __name__ == '__main__':
     create_ticket_mcp_server()
