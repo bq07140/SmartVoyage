@@ -33,9 +33,9 @@ class Config:
 
     def __init__(self):
         # 大模型配置
-        self.base_url = 'https://api.siliconflow.cn/v1'
-        self.api_key = 'sk-xjpgcjnuhhkgucuvxuvhdbcfmgwlakyjqynshyectvcgifdw'
-        self.model_name = 'Qwen/Qwen2.5-72B-Instruct'
+        self.base_url = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+        self.api_key = os.getenv("DASHSCOPE_API_KEY")
+        self.model_name = 'qwen3.6-plus'
 
         # 数据库配置
         self.host = 'localhost'
@@ -58,6 +58,11 @@ class Config:
         }
 
         self.temperature = 0.1
+
+        # 天气数据源配置
+        # 可选值："database"（从数据库获取） / "api"（直接从和风API获取）
+        # 使用 "api" 时，需要确保和风 API 密钥（spider_weather.py 中的 API_KEY）有效
+        self.weather_source = "database"
 
 
     def get_mysql_config(self,env):

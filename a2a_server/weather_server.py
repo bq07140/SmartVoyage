@@ -1,252 +1,315 @@
 """
 需求：实现基于A2A的天气查询服务器，处理用户的天气查询请求并返回结果
-思路步骤：
-1. 导入必要的模块和库
-2. 初始化LLM实例（使用配置文件中的参数）
-3. 定义天气数据表的SQL schema
-4. 创建SQL生成提示模板（用于将自然语言转换为SQL查询）
-5. 实现get_weather函数（调用MCP服务器执行天气查询）
-6. 定义Agent卡片（描述服务器能力和技能）
-7. 创建WeatherQueryServer类（继承A2AServer）
-8. 实现generate_sql_query方法（生成SQL查询或追问）
-9. 实现handle_task方法（处理任务、生成SQL、调用MCP、格式化结果）
-10. 主函数（创建并运行服务器）
+
+架构说明：
+    本服务器是 SmartVoyage 系统中的一个子代理（Sub-Agent），负责处理天气查询任务。
+    它运行在独立的进程中（localhost:5005），通过 A2A（Agent2Agent）协议与主助手通信。
+
+    工作流程（与票务 Agent 保持一致的架构模式）：
+    1. 主助手通过 A2A 协议向本服务器发送任务（Task）
+    2. 本服务器收到任务后，提取用户的自然语言查询
+    3. 使用 LangChain Agent（基于工具调用的 Agent）处理查询：
+       a. LLM 分析用户输入，从自然语言中提取参数（城市、日期等）
+       b. 调用 MCP Server 的参数化工具（query_weather）
+       c. MCP Server 内部根据参数拼接 SQL 并执行查询
+       d. 工具返回结果后，LLM 将结果格式化为友好的中文回复
+    4. 将结果返回给主助手
+
+    与旧模式（Text-to-SQL）的区别：
+    - 旧模式：LLM 直接生成 SQL 语句 → MCP 执行原始 SQL
+      问题：SQL 注入风险、LLM 生成的 SQL 可能带有代码块标记、容易出错
+    - 新模式：LLM 从自然语言中提取参数（city、date）→ MCP 内部拼 SQL
+      优势：参数化查询（安全）、SQL 由 MCP 统一管理（可控）、容错性好
+
+    涉及的关键技术：
+    - LangChain Agent: 让 LLM 自主选择和使用工具的框架
+    - Tool Calling Agent: LLM 以结构化格式调用工具
+    - MCP Tools: MCP Server 提供的参数化工具（city、start_date、end_date）
+    - AgentExecutor: 负责运行 Agent 循环（思考→调用工具→处理结果→继续）
 """
-import json
-import asyncio
-from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+
+# ==================== 导入依赖 ====================
+import json  # JSON 处理
+import asyncio  # 异步 IO 库，用于在同步方法中调用异步 MCP 客户端
+
+from mcp import ClientSession  # MCP 客户端会话
+from mcp.client.streamable_http import streamablehttp_client  # MCP HTTP 流式客户端
 from python_a2a import A2AServer, run_server, AgentCard, AgentSkill, TaskStatus, TaskState
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
+# A2AServer: A2A 服务器基类，我们需要继承它来实现自己的天气查询服务器
+# run_server: 启动 A2A 服务器的函数
+# AgentCard: 代理卡片，描述本代理的能力、技能等信息
+# AgentSkill: 代理技能，描述本代理能做什么
+# TaskStatus: 任务状态，标记任务是完成、失败还是需要输入
+# TaskState: 任务状态枚举（COMPLETED / FAILED / INPUT_REQUIRED）
 
-from SmartVoyage.config import Config
-from datetime import datetime
-import pytz
+from langchain_openai import ChatOpenAI  # LangChain 的大模型接口
+from langchain_core.prompts import ChatPromptTemplate  # LangChain 的提示模板
+from langchain_mcp_adapters.tools import load_mcp_tools  # 从 MCP 会话加载工具
+from langchain.agents import create_tool_calling_agent, AgentExecutor
+# create_tool_calling_agent: 创建基于工具调用的 Agent
+# AgentExecutor: Agent 执行器，负责运行 Agent 循环
 
-from SmartVoyage.create_logger import logger
+from SmartVoyage.config import Config  # 项目配置（模型地址、API Key等）
+from datetime import datetime  # 时间处理，用于获取当前日期
+import pytz  # 时区库，用于转换到 Asia/Shanghai 时区
 
-conf = Config()
+from SmartVoyage.create_logger import logger  # 日志模块
 
-# 初始化LLM
+conf = Config()  # 全局配置实例
+
+# ==================== 初始化大模型 ====================
+# 创建一个 LLM 实例，供 Agent 使用
 llm = ChatOpenAI(
-    model=conf.model_name,
-    base_url=conf.base_url,
-    api_key=conf.api_key,
-    temperature=0.1
+    model=conf.model_name,     # 模型名称，如 "Qwen/Qwen2.5-72B-Instruct"
+    base_url=conf.base_url,    # API 基础地址（SiliconFlow）
+    api_key=conf.api_key,      # API 密钥
+    temperature=0.1            # 温度参数：0.1 表示输出比较确定、稳定，适合参数提取
 )
 
-# 数据表 schema
-table_schema_string = """  # 定义天气数据表的SQL schema字符串，用于Prompt上下文
-CREATE TABLE IF NOT EXISTS weather_data (
-id INT AUTO_INCREMENT PRIMARY KEY,
-city VARCHAR(50) NOT NULL COMMENT '城市名称',
-fx_date DATE NOT NULL COMMENT '预报日期',
-sunrise TIME COMMENT '日出时间',
-sunset TIME COMMENT '日落时间',
-moonrise TIME COMMENT '月升时间',
-moonset TIME COMMENT '月落时间',
-moon_phase VARCHAR(20) COMMENT '月相名称',
-moon_phase_icon VARCHAR(10) COMMENT '月相图标代码',
-temp_max INT COMMENT '最高温度',
-temp_min INT COMMENT '最低温度',
-icon_day VARCHAR(10) COMMENT '白天天气图标代码',
-text_day VARCHAR(20) COMMENT '白天天气描述',
-icon_night VARCHAR(10) COMMENT '夜间天气图标代码',
-text_night VARCHAR(20) COMMENT '夜间天气描述',
-wind360_day INT COMMENT '白天风向360角度',
-wind_dir_day VARCHAR(20) COMMENT '白天风向',
-wind_scale_day VARCHAR(10) COMMENT '白天风力等级',
-wind_speed_day INT COMMENT '白天风速 (km/h)',
-wind360_night INT COMMENT '夜间风向360角度',
-wind_dir_night VARCHAR(20) COMMENT '夜间风向',
-wind_scale_night VARCHAR(10) COMMENT '夜间风力等级',
-wind_speed_night INT COMMENT '夜间风速 (km/h)',
-precip DECIMAL(5,1) COMMENT '降水量 (mm)',
-uv_index INT COMMENT '紫外线指数',
-humidity INT COMMENT '相对湿度 (%)',
-pressure INT COMMENT '大气压强 (hPa)',
-vis INT COMMENT '能见度 (km)',
-cloud INT COMMENT '云量 (%)',
-update_time DATETIME COMMENT '数据更新时间',
-UNIQUE KEY unique_city_date (city, fx_date)
-) ENGINE=INNODB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='天气数据表';
-"""
+# ==================== MCP 客户端配置 ====================
+# MCP Server 运行在 8002 端口，提供天气查询的参数化工具
+# 本服务器通过连接 MCP Server，让 Agent 自主调用其工具
+MCP_URL = "http://127.0.0.1:8002/mcp"
 
-# 生成SQL的提示词
-sql_prompt = ChatPromptTemplate.from_template(
+
+# ==================== 天气查询函数 ====================
+async def query_weather(conversation: str) -> dict:
     """
-系统提示：你是一个专业的天气SQL生成器，需要从对话历史（含用户的问题）中提取关键信息，然后基于weather_data表生成SELECT语句。
-- 如果用户需要查天气，则至少需要城市和时间信息。如果对话历史中缺乏必要的信息，可以向其追问，输出格式为json格式，如示例所示；如果对话历史中信息齐全，则输出纯SQL即可。
-- 如果用户问与天气无关的问题，则模仿最后2个示例回复即可。
+    通过 LangChain Agent + MCP Tools 执行天气查询
 
+    与票务 Agent（ticket_server.py）使用完全相同的架构模式：
+    1. 连接 MCP Server 加载所有可用的工具
+    2. 创建一个 LangChain Agent，让它自主选择调用哪个工具
+    3. AgentExecutor 负责执行 Agent 循环：
+       - LLM 分析用户输入，从自然语言中提取参数（城市、日期等）
+       - 调用 MCP Server 的参数化工具（如 query_weather(city="北京", start_date="2025-07-30")）
+       - MCP Server 内部根据参数拼接 SQL 并执行
+       - 工具返回结果后，LLM 将结果格式化为友好的中文回复
 
-示例：
-- 对话: user: 北京 2025-07-30
-输出: SELECT city, fx_date, temp_max, temp_min, text_day, text_night, humidity, wind_dir_day, precip FROM weather_data WHERE city = '北京' AND fx_date = '2025-07-30'
-- 对话: user: 上海未来3天的天气
-输出: SELECT city, fx_date, temp_max, temp_min, text_day, text_night, humidity, wind_dir_day, precip 
-        FROM weather_data 
-        WHERE city = '上海' AND fx_date BETWEEN '2025-07-30' AND '2025-08-01' 
-        ORDER BY fx_date
+    与旧模式（Text-to-SQL）的对比：
+    旧模式流程：
+        用户输入 "北京明天天气" → LLM 生成 SQL → MCP 执行原始 SQL
+    新模式流程：
+        用户输入 "北京明天天气" → LLM 提取 city="北京", date="明天" →
+        MCP 工具接收参数 → MCP 内部拼 SQL → 执行 → LLM 格式化回复
 
-- 对话: user: 北京的天气
-输出: {{"status": "input_required", "message": "请提供具体的需要查询的日期，例如 '2025-07-30'。"}}
-- 对话: user: 今天
-assistant: 请提供城市。
-user: 北京
-输出: SELECT city, fx_date, temp_max, temp_min, text_day, text_night, humidity, wind_dir_day, precip FROM weather_data WHERE city = '北京' AND fx_date = '2025-07-30'
-- 对话: user: 北京明天的天气\nassistant: 多云。\nuser: 后天呢
-输出: SELECT city, fx_date, temp_max, temp_min, text_day, text_night, humidity, wind_dir_day, precip FROM weather_data WHERE city = '北京' AND fx_date = '2025-08-01'
+    参数：
+        conversation (str): 用户的查询内容，例如：
+            "北京明天天气怎么样？"
+            "上海未来3天的天气"
+            "北京2025-07-30的天气"
 
-- 对话: user: 你好
-输出: {{"status": "input_required", "message": "请提供城市和日期，例如 '北京 2025-07-30'。"}}
-- 对话: user: 今天有什么好吃的
-输出: {{"status": "input_required", "message": "请提供天气相关查询，包括城市和日期。"}}
-
-
-weather_data表结构：{table_schema_string}
-对话历史: {conversation}
-当前日期: {current_date} (Asia/Shanghai)
+    返回值：
+        dict: 查询结果，格式为：
+            - {"status": "success", "message": "格式化后的查询结果"}  # 查询成功
+            - {"status": "error", "message": "错误信息"}  # 查询失败
     """
-)
-
-
-
-# 定义查询函数
-async def get_weather(sql):
     try:
-        # 启动 MCP server，通过streamable建立连接
-        async with streamablehttp_client("http://127.0.0.1:8002/mcp") as (read, write, _):
-            # 使用读写通道创建 MCP 会话
+        # 连接 MCP Server（端口 8002），建立通信通道
+        async with streamablehttp_client(MCP_URL) as (read, write, _):
             async with ClientSession(read, write) as session:
-                try:
-                    await session.initialize()
-                    # 工具调用
-                    result = await session.call_tool("query_weather", {"sql": sql})
-                    result_data = json.loads(result) if isinstance(result, str) else result
-                    logger.info(f"天气查询结果：{result_data}")
-                    return result_data.content[0].text
-                except Exception as e:
-                    logger.error(f"天气 MCP 测试出错：{str(e)}")
-                    return {"status": "error", "message": f"天气 MCP 查询出错：{str(e)}"}
-    except Exception as e:
-        logger.error(f"连接或会话初始化时发生错误: {e}")
-        return {"status": "error", "message": "连接或会话初始化时发生错误"}
+                await session.initialize()  # 初始化会话
 
-# Agent卡片定义
+                # 从 MCP 会话中加载所有可用工具
+                # load_mcp_tools 会自动将 MCP Server 提供的工具转换为 LangChain 工具对象
+                # 当前只有一个工具：query_weather(city, start_date, end_date)
+                tools = await load_mcp_tools(session)
+
+                # 定义 Agent 的系统 Prompt
+                # 这个 Prompt 告诉 LLM：你是谁、你能做什么、如何提取参数、输出格式要求
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", """你是一个天气查询助手，能够调用工具来查询天气信息。
+你需要仔细分析用户的问题，从问题中提取工具需要的参数（城市、日期等），然后调用对应的查询工具。
+如果用户提供的信息不足以提取到调用工具的所有必要参数，则向用户追问，以获取该信息。不能自己编撰参数。
+注意：
+- 用户可能使用相对时间，如"明天"、"后天"、"今天"、"未来3天"等，请根据当前日期转换为具体日期（YYYY-MM-DD格式）。
+- 如果用户只给了城市没给日期，需要追问日期。
+- 如果用户只给了日期没给城市，需要追问城市。
+查询到结果后，请用清晰的中文格式化输出天气信息，包括城市、日期、天气状况、温度、湿度、风向、降水量等。
+如果未查到数据，请回复"未找到相关天气数据，请确认或修改查询条件。"
+当前日期是{current_date}。"""),
+                    ("human", "{input}"),  # 用户输入会替换到这里
+                    ("placeholder", "{agent_scratchpad}"),  # Agent 思考过程的占位符
+                ])
+
+                # 创建基于工具调用的 Agent
+                # create_tool_calling_agent 会创建一个能自主选择和使用工具的 Agent
+                # LLM 以结构化格式（函数调用）来使用工具，而不是用自然语言描述
+                agent = create_tool_calling_agent(llm, tools, prompt)
+
+                # 创建 Agent 执行器
+                # AgentExecutor 负责运行 Agent 循环：
+                # 1. 将用户输入发给 LLM
+                # 2. LLM 决定调用哪个工具 + 提供参数
+                # 3. 执行工具调用
+                # 4. 将工具结果返回给 LLM
+                # 5. LLM 生成最终回复
+                agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+
+                # 获取当前日期，注入到 Prompt 中（用户可能说"明天"、"后天"等相对时间）
+                current_date = datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%Y-%m-%d')
+
+                # 执行 Agent，传入用户输入和当前日期
+                response = await agent_executor.ainvoke({
+                    "input": conversation,           # 用户输入的查询内容
+                    "current_date": current_date     # 当前日期，用于相对时间转换
+                })
+
+                # AgentExecutor 的 response["output"] 就是 LLM 生成的最终回复
+                return {"status": "success", "message": response["output"]}
+
+    except Exception as e:
+        # MCP 连接失败、工具调用异常等情况的捕获
+        logger.error(f"天气 MCP 查询出错：{str(e)}")
+        return {"status": "error", "message": f"天气 MCP 查询出错：{str(e)}"}
+
+
+# ==================== Agent Card（代理卡片） ====================
+# Agent Card 是 A2A 协议中描述一个代理能力的元数据
+# 它告诉主助手：我是谁、我能做什么、我运行在哪里、我有哪些技能
+# 主助手通过这个卡片来决定是否将任务路由到这个代理
 agent_card = AgentCard(
-    name="WeatherQueryAssistant",
-    description="基于LangChain提供天气查询服务的助手",
-    url="http://localhost:5005",
-    version="1.0.0",
-    capabilities={"streaming": True, "memory": True},  # 设置能力：支持流式和内存
-    skills=[  # 定义技能列表
+    name="WeatherQueryAssistant",  # 代理名称
+    description="基于LangChain提供天气查询服务的助手",  # 代理描述
+    url="http://localhost:5005",  # 代理的访问地址
+    version="2.0.0",  # 版本号（升级为2.0.0，表示架构变更）
+    capabilities={"streaming": True, "memory": True},  # 支持的能力：流式输出、记忆
+    skills=[  # 技能列表：描述本代理具体能做什么
         AgentSkill(
-            name="execute weather query",
-            description="执行天气查询，返回天气数据库结果，支持自然语言输入",
-            examples=["北京 2025-07-30 天气", "上海未来5天", "今天天气如何"]
+            name="execute weather query",  # 技能名称
+            description="执行天气查询，返回天气数据库结果，支持自然语言输入，支持单天和范围查询",  # 技能描述
+            examples=["北京 2025-07-30 天气", "上海未来5天", "今天天气如何"]  # 使用示例
         )
     ]
 )
 
-# 天气查询服务器类
+
+# ==================== 天气查询服务器类 ====================
 class WeatherQueryServer(A2AServer):
+    """
+    天气查询 A2A 服务器
+
+    这个类继承自 A2AServer，实现了天气查询的完整流程。
+    与旧模式（Text-to-SQL）不同，现在使用 LangChain Agent + MCP Tools 模式：
+    - LLM 负责从自然语言中提取参数（城市、日期）
+    - MCP Server 内部根据参数拼接 SQL 并执行（参数化查询，更安全）
+
+    任务状态说明：
+    - COMPLETED: 任务成功完成，结果放在 task.artifacts 中
+    - FAILED: 任务失败，错误信息放在 task.status.message 中
+    - INPUT_REQUIRED: 需要用户补充输入，追问信息放在 task.status.message 中
+    """
+
     def __init__(self):
-        super().__init__(agent_card=agent_card)
-        self.llm = llm
-        self.sql_prompt = sql_prompt
-        self.schema = table_schema_string
+        """
+        初始化天气查询服务器
 
-    # 定义生成SQL查询方法，输入对话历史，返回SQL或追问JSON
-    def generate_sql_query(self, conversation: str) -> dict:
-        try:
-            # 组装链
-            chain = self.sql_prompt | self.llm
-            # 调用链
-            current_date = datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%Y-%m-%d')  # 获取当前日期，格式化为字符串
-            output = chain.invoke({"conversation": conversation, "current_date": current_date, "table_schema_string": self.schema}).content.strip()
-            logger.info(f"原始 LLM 输出: {output}")
-            # 处理结果，返回字典
-            if output.startswith('{'):  # 检查输出是否以JSON开头
-                return json.loads(output)
-            return {"status": "sql", "sql": output}
-        except Exception as e:
-            logger.error(f"SQL生成失败: {str(e)}")
-            return {"status": "input_required", "message": "查询无效，请提供城市和日期。"}  # 返回追问JSON
+        调用父类的 __init__ 注册 Agent Card。
+        """
+        super().__init__(agent_card=agent_card)  # 调用父类初始化，注册 Agent Card
 
-    # 处理任务：提取输入，生成SQL，调用MCP，格式化结果
     def handle_task(self, task):
-        # 1 提取输入
-        content = (task.message or {}).get("content", {})  # 从消息中获取内容
-        # 提取conversation，即客户端发起的任务中的query语句
+        """
+        处理来自 A2A 客户端的任务 —— 本服务器的核心方法
+
+        当主助手通过 A2A 协议发送任务过来时，这个方法会被调用。
+        它负责完成从"接收任务"到"返回结果"的完整流程。
+
+        完整流程：
+        1. 提取输入：从任务消息中获取用户的查询内容
+        2. 调用 MCP 查询：通过 query_weather 函数执行查询
+           - query_weather 内部使用 LangChain Agent + MCP Tools
+           - LLM 自动从自然语言中提取参数（城市、日期）
+           - MCP Server 根据参数拼接 SQL 并执行
+           - LLM 将结果格式化为友好的中文回复
+        3. 根据查询结果设置任务状态：
+           - 成功：COMPLETED 状态，结果放在 task.artifacts
+           - 需要输入：INPUT_REQUIRED 状态，追问信息放在 task.status.message
+           - 失败：FAILED 状态，错误信息放在 task.status.message
+
+        参数：
+            task: A2A 任务对象，包含：
+                - task.message: 客户端发送的消息（包含用户输入）
+                - task.artifacts: 用于存放任务结果（输出）
+                - task.status: 任务状态（完成/失败/需要输入）
+
+        返回值：
+            task: 处理后的任务对象（已设置状态和结果）
+        """
+        # ========== 步骤1：提取输入 ==========
+        # 从任务消息中获取内容（A2A 协议中，消息以字典格式存储）
+        content = (task.message or {}).get("content", {})
+        # 提取对话内容，即客户端发起的任务中的用户输入
         conversation = content.get("text", "") if isinstance(content, dict) else ""
         logger.info(f"对话历史及用户问题: {conversation}")
 
         try:
-            # 2 基于用户问题生成SQL查询
-            gen_result = self.generate_sql_query(conversation)
-            # 检查是否需要追问，如果是则添加追问消息后返回任务
-            if gen_result["status"] == "input_required":
-                # 追问逻辑，这里是指在无法正常生成sql时，设置任务状态为输入所需，添加追问消息
-                task.status = TaskStatus(state=TaskState.INPUT_REQUIRED,
-                                         message={"role": "agent", "content": {"text": gen_result["message"]}})
-                return task
+            # ========== 步骤2：调用 MCP 查询 ==========
+            # query_weather 内部会：
+            # 1. 连接 MCP Server 加载所有工具
+            # 2. 创建 LangChain Agent
+            # 3. Agent 自动从自然语言中提取参数（城市、日期等）
+            # 4. 调用 MCP 的参数化工具（query_weather(city="北京", start_date="2025-07-30")）
+            # 5. MCP Server 内部拼接 SQL 并执行
+            # 6. LLM 将结果格式化为友好的中文回复
+            weather_result = asyncio.run(query_weather(conversation))
+            logger.info(f"MCP 查询返回: {weather_result}")
 
-            # 否则则提取SQL查询，并进行MCP调用
-            sql_query = gen_result["sql"]  #
-            logger.info(f"生成的SQL查询: {sql_query}")
+            # ========== 步骤3：根据结果设置任务状态 ==========
+            if weather_result.get("status") == "success":
+                result_text = weather_result.get("message", "")
 
-            # 3 调用MCP
-            weather_result = asyncio.run(get_weather(sql_query))
+                # 检查是否是追问消息（LLM 发现信息不足时会追问）
+                if "请提供" in result_text or "请确认" in result_text:
+                    # 需要用户补充信息
+                    task.status = TaskStatus(
+                        state=TaskState.INPUT_REQUIRED,
+                        message={"role": "agent", "content": {"text": result_text}}
+                    )
+                else:
+                    # 查询成功，将结果放入任务产物
+                    task.artifacts = [{"parts": [{"type": "text", "text": result_text}]}]
+                    task.status = TaskStatus(state=TaskState.COMPLETED)
 
-            # 4 格式化结果
-            response = json.loads(weather_result) if isinstance(weather_result, str) else weather_result
-            logger.info(f"MCP 返回: {response}")
-            # 检查响应状态
-            if response.get("status") == "success":
-                data = response.get("data", [])  # 提取数据列表
-                response_text = "\n".join([
-                                              f"{d['city']} {d['fx_date']}: {d['text_day']}（夜间 {d['text_night']}），温度 {d['temp_min']}-{d['temp_max']}°C，湿度 {d['humidity']}%，风向 {d['wind_dir_day']}，降水 {d['precip']}mm"
-                                              for d in data])  # 格式化每个数据项为友好文本，连接成多行
-
-                # 设置任务产物为文本部分，并设置任务状态为完成
-                task.artifacts = [{"parts": [{"type": "text", "text": response_text}]}]
-                task.status = TaskStatus(state=TaskState.COMPLETED)
-            elif response.get("status") == "no_data":
-                response_text = response.get("message", "请重新输入查询的城市和日期。")
-
-                # 设置任务状态为输入所需，添加追问消息
-                task.status = TaskStatus(state=TaskState.INPUT_REQUIRED,
-                                         message={"role": "agent", "content": {"text": response_text}})
+            elif weather_result.get("status") == "error":
+                # MCP 查询出错：设置为失败状态
+                task.status = TaskStatus(
+                    state=TaskState.FAILED,
+                    message={"role": "agent", "content": {"text": weather_result.get("message", "查询失败，请重试。")}}
+                )
             else:
-                response_text = response.get("message", "查询失败，请重试或提供更多细节。")
-
-                # 设置任务状态为失败，添加错误信息
-                task.status = TaskStatus(state=TaskState.FAILED,
-                                         message={"role": "agent", "content": {"text": response_text}})
+                # 未知的状态码，也视为失败
+                task.status = TaskStatus(
+                    state=TaskState.FAILED,
+                    message={"role": "agent", "content": {"text": "查询失败，请重试或提供更多细节。"}}
+                )
 
             return task
-        except Exception as e:  # 捕获异常
+
+        except Exception as e:
+            # 捕获所有异常，确保即使出错也能返回有效的任务状态
             logger.error(f"查询失败: {str(e)}")
-
-            # 设置任务状态为失败，添加错误信息
-            task.status = TaskStatus(state=TaskState.FAILED,
-                                     message={"role": "agent",
-                                              "content": {"text": f"查询失败: {str(e)} 请重试或提供更多细节。"}})
+            task.status = TaskStatus(
+                state=TaskState.FAILED,
+                message={"role": "agent",
+                         "content": {"text": f"查询失败: {str(e)} 请重试或提供更多细节。"}}
+            )
             return task
 
 
+# ==================== 主函数：启动服务器 ====================
 if __name__ == "__main__":
-    # 创建并运行服务器
-    # 实例化天气查询服务器
+    # 创建天气查询服务器实例
     weather_server = WeatherQueryServer()
-    # 打印服务器信息
+
+    # 打印服务器信息，方便确认启动状态
     print("\n=== 服务器信息 ===")
     print(f"名称: {weather_server.agent_card.name}")
     print(f"描述: {weather_server.agent_card.description}")
     print("\n技能:")
     for skill in weather_server.agent_card.skills:
         print(f"- {skill.name}: {skill.description}")
-    # 运行服务器
+
+    # 启动 A2A 服务器，监听 5005 端口
+    # 主助手会通过 http://localhost:5005 连接本服务器
     run_server(weather_server, host="127.0.0.1", port=5005)
