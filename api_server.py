@@ -33,7 +33,7 @@ async def index():
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     """发送消息，获取回复"""
-    response = chat_service.chat(request.message)
+    response = await chat_service.chat(request.message)
     return {"status": "success", "message": response}
 
 

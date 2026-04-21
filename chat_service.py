@@ -10,18 +10,6 @@ import re
 from python_a2a import AgentNetwork, TextContent, Message, MessageRole, Task
 from langchain_openai import ChatOpenAI
 
-
-def _run_async(coro):
-    """兼容同步和异步环境：如果已有运行中的事件循环，则创建新线程运行协程"""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(asyncio.run, coro)
-        return future.result()
-
 from SmartVoyage.config import Config
 from SmartVoyage.create_logger import logger
 from SmartVoyage.main_prompts import SmartVoyagePrompts
@@ -78,7 +66,7 @@ class ChatService:
 
         return intents, user_queries, follow_up_message
 
-    def chat(self, user_input: str) -> str:
+    async def chat(self, user_input: str) -> str:
         """处理用户输入，返回助手响应"""
         self.memory.add_message("user", user_input)
         self.messages.append({"role": "user", "content": user_input})
@@ -114,7 +102,9 @@ class ChatService:
                         chat_history = self.memory.get_short_term_text() + f'\nUser: {query_str}'
                         msg = Message(content=TextContent(text=chat_history), role=MessageRole.USER)
                         task = Task(id="task-" + str(uuid.uuid4()), message=msg.to_dict())
-                        raw_response = _run_async(agent.send_task_async(task))
+                        raw_response = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: asyncio.run(agent.send_task_async(task))
+                        )
                         logger.info(f"{agent_name} 原始响应: {raw_response}")
 
                         if raw_response.status.state == 'completed':
