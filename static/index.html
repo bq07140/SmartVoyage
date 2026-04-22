@@ -232,7 +232,7 @@
         </div>
     </div>
 
-    <div class="footer">Powered by 黑马程序员 | 基于Agent2Agent的旅行助手系统 v4.0</div>
+    <div class="footer">Powered by 黑马程序员 | 基于Agent2Agent的旅行助手系统 v7.5</div>
 
     <script>
         const chatMessages = document.getElementById('chatMessages');
@@ -266,7 +266,7 @@
             const div = document.createElement('div');
             div.className = 'message assistant';
             div.id = 'typingIndicator';
-            div.innerHTML = `<div class="message-bubble"><div class="typing-indicator"><span></span><span></span><span></span></div></div>`;
+            div.innerHTML = `<div class="message-bubble"><div class="typing-indicator"><span></span><span></span><span></span></div> 思考中，请等待...</div>`;
             chatMessages.appendChild(div);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
