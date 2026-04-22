@@ -169,6 +169,21 @@
             40% { opacity: 1; }
         }
 
+        /* Streaming cursor */
+        .cursor {
+            display: inline-block;
+            width: 2px;
+            height: 1em;
+            background: #e94560;
+            margin-left: 2px;
+            animation: cursor-blink 0.8s infinite;
+            vertical-align: text-bottom;
+        }
+        @keyframes cursor-blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
         /* Footer */
         .footer {
             background: #16213e;
@@ -233,15 +248,18 @@
         });
 
         function addMessage(role, content) {
-            // Remove loading indicator
             const loading = chatMessages.querySelector('.loading');
             if (loading) loading.remove();
 
             const div = document.createElement('div');
             div.className = `message ${role}`;
-            div.innerHTML = `<div class="message-bubble">${escapeHtml(content)}</div>`;
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble';
+            bubble.innerHTML = escapeHtml(content);
+            div.appendChild(bubble);
             chatMessages.appendChild(div);
             chatMessages.scrollTop = chatMessages.scrollHeight;
+            return bubble;
         }
 
         function showTyping() {
@@ -273,15 +291,52 @@
             addMessage('user', text);
             showTyping();
 
+            let fullText = '';
             try {
-                const response = await fetch('/api/chat', {
+                const response = await fetch('/api/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: text })
                 });
-                const data = await response.json();
+
                 hideTyping();
-                addMessage('assistant', data.message);
+                const bubble = addMessage('assistant', '');
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed.startsWith('data: ')) continue;
+                        const data = trimmed.slice(6);
+                        if (data === '[DONE]') continue;
+
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed.chunk) {
+                                fullText += parsed.chunk;
+                                bubble.innerHTML = escapeHtml(fullText) + '<span class="cursor"></span>';
+                                chatMessages.scrollTop = chatMessages.scrollHeight;
+                            }
+                        } catch (e) { /* skip parse errors */ }
+                    }
+                }
+
+                // Remove cursor when done
+                bubble.innerHTML = escapeHtml(fullText);
+                if (!fullText) {
+                    bubble.innerHTML = '<span style="color:#888;">（未收到回复）</span>';
+                }
+
             } catch (err) {
                 hideTyping();
                 addMessage('assistant', '请求失败，请检查网络连接。');
@@ -290,7 +345,6 @@
                 chatInput.focus();
             }
 
-            // Refresh sidebar
             loadMemory();
         }
 
@@ -328,13 +382,23 @@
                             </div>
                         `).join('') || '<div class="memory-item"><p>无</p></div>'}
                     </details>
-                    <details class="memory-section">
+                    <details class="memory-section" open>
                         <summary>用户偏好</summary>
-                        ${Object.keys(m.user_profile).length > 0
-                            ? Object.entries(m.user_profile).map(([k, v]) => `
-                                <div class="memory-item"><p><strong>${escapeHtml(k)}:</strong> ${escapeHtml(v)}</p></div>
-                            `).join('')
-                            : '<div class="memory-item"><p>无</p></div>'}
+                        <div id="profileEditor">
+                            ${Object.keys(m.user_profile).length > 0
+                                ? Object.entries(m.user_profile).map(([k, v]) => `
+                                    <div class="memory-item" style="display:flex;gap:8px;align-items:center;">
+                                        <input type="text" class="profile-key" value="${escapeHtml(k)}" placeholder="键名" style="flex:1;padding:4px 8px;border-radius:4px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;font-size:12px;">
+                                        <input type="text" class="profile-value" value="${escapeHtml(v)}" placeholder="值" style="flex:1;padding:4px 8px;border-radius:4px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;font-size:12px;">
+                                        <button onclick="removeProfileItem(this)" style="padding:2px 8px;border-radius:4px;border:1px solid #e94560;background:transparent;color:#e94560;font-size:12px;cursor:pointer;">&times;</button>
+                                    </div>
+                                `).join('')
+                                : ''}
+                            <div style="display:flex;gap:8px;margin:8px 0;">
+                                <button onclick="addProfileRow()" style="flex:1;padding:6px;border-radius:4px;border:1px dashed #0f3460;background:transparent;color:#888;font-size:12px;cursor:pointer;">+ 添加偏好</button>
+                                <button onclick="saveProfile()" style="flex:1;padding:6px;border-radius:4px;border:1px solid #e94560;background:transparent;color:#e94560;font-size:12px;cursor:pointer;">保存全部</button>
+                            </div>
+                        </div>
                     </details>
                     <details class="memory-section">
                         <summary>当前任务</summary>
@@ -367,6 +431,49 @@
                 loadMemory();
             } catch (err) {
                 console.error('Failed to clear memory:', err);
+            }
+        }
+
+        // ========== 用户偏好编辑 ==========
+
+        function addProfileRow() {
+            const editor = document.getElementById('profileEditor');
+            const row = document.createElement('div');
+            row.className = 'memory-item';
+            row.style.cssText = 'display:flex;gap:8px;align-items:center;';
+            row.innerHTML = `
+                <input type="text" class="profile-key" placeholder="键名" style="flex:1;padding:4px 8px;border-radius:4px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;font-size:12px;">
+                <input type="text" class="profile-value" placeholder="值" style="flex:1;padding:4px 8px;border-radius:4px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;font-size:12px;">
+                <button onclick="removeProfileItem(this)" style="padding:2px 8px;border-radius:4px;border:1px solid #e94560;background:transparent;color:#e94560;font-size:12px;cursor:pointer;">&times;</button>
+            `;
+            editor.insertBefore(row, editor.lastElementChild);
+            row.querySelector('.profile-key').focus();
+        }
+
+        function removeProfileItem(btn) {
+            btn.parentElement.remove();
+        }
+
+        async function saveProfile() {
+            const editor = document.getElementById('profileEditor');
+            const keys = editor.querySelectorAll('.profile-key');
+            const values = editor.querySelectorAll('.profile-value');
+            const profile = {};
+            for (let i = 0; i < keys.length; i++) {
+                const k = keys[i].value.trim();
+                const v = values[i].value.trim();
+                if (k && v) profile[k] = v;
+            }
+            try {
+                await fetch('/api/memory/profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ profile })
+                });
+                // 刷新侧边栏显示
+                loadMemory();
+            } catch (err) {
+                console.error('Failed to save profile:', err);
             }
         }
 

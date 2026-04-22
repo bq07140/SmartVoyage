@@ -223,7 +223,10 @@ class SmartVoyagePrompts:
     @staticmethod
     def react_prompt():
         """
-        ReAct 推理提示模板 —— 让大模型按 Thought-Action-Observation 格式逐步推理
+        ReAct 推理提示模板 —— 按 Thought-Action-Observation 格式逐步推理
+
+        注意：当前版本已优化性能，react_loop 中跳过了 Thought LLM 调用（plan 已确定
+        动作，Thought 无额外决策价值），此模板暂时不在主流程中使用，保留供学习参考。
 
         什么是 ReAct？
             ReAct = Reasoning（推理）+ Acting（行动）

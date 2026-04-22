@@ -51,9 +51,9 @@ class Config:
 
         self.intent = {
             "weather": "WeatherQueryAssistant",
-            "flight": "TicketQueryAssistant",
-            "train": "TicketQueryAssistant",
-            "concert": "TicketQueryAssistant",
+            "flight": "TicketAssistant",
+            "train": "TicketAssistant",
+            "concert": "TicketAssistant",
             "order": "TicketAssistant",
             "car_rental": "TripAssistant",
             "tour_group": "TripAssistant",
@@ -66,7 +66,7 @@ class Config:
         # 天气数据源配置
         # 可选值："database"（从数据库获取） / "api"（直接从和风API获取）
         # 使用 "api" 时，需要确保和风 API 密钥（spider_weather.py 中的 API_KEY）有效
-        self.weather_source = "database"
+        self.weather_source = "api"
 
 
     def get_mysql_config(self,env):

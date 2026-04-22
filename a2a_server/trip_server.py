@@ -139,8 +139,13 @@ async def query_trip(conversation: str) -> dict:
 
                 return {"status": "success", "message": response["output"]}
 
-    except Exception as e:
-        # MCP 连接失败、工具调用异常等情况的捕获
+    except ExceptionGroup as eg:
+        # MCP 工具内部使用 anyio.create_task_group()，失败时抛出 ExceptionGroup
+        first_exc = eg.exceptions[0] if eg.exceptions else eg
+        logger.error(f"行程 MCP 查询出错：{first_exc}")
+        return {"status": "error", "message": f"行程 MCP 查询出错：{first_exc}"}
+    except BaseException as e:
+        # 兜底捕获（包括 ExceptionGroup 等 BaseException 子类）
         logger.error(f"行程 MCP 查询出错：{str(e)}")
         return {"status": "error", "message": f"行程 MCP 查询出错：{str(e)}"}
 
