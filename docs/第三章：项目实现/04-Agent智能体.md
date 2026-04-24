@@ -10,6 +10,8 @@
 
 * 理解 Agent 执行循环：分析输入 → 选择工具 → 获取结果 → 格式化回复
 
+* 掌握 Agent 服务器的测试方法：验证 AgentCard 定义、模拟异步查询返回、测试任务状态转换
+
 
 
 ## 一、天气 Agent 服务器
@@ -578,4 +580,268 @@ if __name__ == "__main__":
     for skill in trip_server.agent_card.skills:
         print(f"- {skill.name}: {skill.description}")
     run_server(trip_server, host="127.0.0.1", port=5007)
+```
+
+
+
+## 四、Agent 服务器测试
+
+### 1 测试策略
+
+Agent 服务器涉及 LLM API 调用和 MCP 网络连接，不适合直接运行端到端测试。测试重点是：
+
+| 测试目标 | 方法 | 说明 |
+|---------|------|------|
+| AgentCard 定义 | 直接导入检查 | 验证名称、URL、技能数量和类型 |
+| handle_task 行为 | `unittest.mock` 模拟异步查询函数 | 测试成功/失败/追问三种状态转换 |
+| 异常处理 | 模拟抛出异常 | 验证即使出错也返回有效的失败状态 |
+
+### 2 AgentCard 定义测试
+
+验证每个 Agent 的代理卡片信息是否正确配置。
+
+**测试文件**：SmartVoyage/tests/test_agent_servers.py
+
+```python
+import unittest
+from unittest.mock import MagicMock, patch
+
+from SmartVoyage.a2a_server.weather_server import agent_card as weather_card
+from SmartVoyage.a2a_server.ticket_server import agent_card as ticket_card
+from SmartVoyage.a2a_server.trip_server import agent_card as trip_card
+
+
+class TestWeatherAgentCard(unittest.TestCase):
+    """测试天气 Agent 的代理卡片定义"""
+
+    def test_agent_card_basic(self):
+        """验证代理卡片基本信息"""
+        self.assertEqual(weather_card.name, "WeatherQueryAssistant")
+        self.assertIn("天气查询", weather_card.description)
+        self.assertEqual(weather_card.url, "http://localhost:5005")
+        self.assertEqual(len(weather_card.skills), 1)
+
+    def test_weather_skill_examples(self):
+        """验证天气技能示例"""
+        skill = weather_card.skills[0]
+        self.assertIn("weather", skill.name.lower())
+        self.assertIsNotNone(skill.description)
+        self.assertGreater(len(skill.examples), 0)
+
+
+class TestTicketAgentCard(unittest.TestCase):
+    """测试票务 Agent 的代理卡片定义"""
+
+    def test_agent_card_skills(self):
+        """验证票务代理拥有 6 个技能"""
+        self.assertEqual(ticket_card.name, "TicketAssistant")
+        self.assertEqual(ticket_card.url, "http://localhost:5006")
+        self.assertEqual(len(ticket_card.skills), 6)
+
+    def test_has_query_and_order_skills(self):
+        """验证同时包含查询和预定技能"""
+        skill_names = [s.name for s in ticket_card.skills]
+        query_skills = [n for n in skill_names if 'query' in n.lower()]
+        order_skills = [n for n in skill_names if 'order' in n.lower()]
+        self.assertEqual(len(query_skills), 3, "应该有3个查询技能")
+        self.assertEqual(len(order_skills), 3, "应该有3个预定技能")
+
+
+class TestTripAgentCard(unittest.TestCase):
+    """测试行程 Agent 的代理卡片定义"""
+
+    def test_has_all_trip_skills(self):
+        """验证包含租车、旅游团、保险的查询和预定技能"""
+        skill_names = [s.name.lower() for s in trip_card.skills]
+        self.assertTrue(any('car' in n for n in skill_names), "缺少租车技能")
+        self.assertTrue(any('tour' in n for n in skill_names), "缺少旅游团技能")
+        self.assertTrue(any('insurance' in n for n in skill_names), "缺少保险技能")
+```
+
+### 3 handle_task 行为测试（模拟异步查询）
+
+Agent 服务器的 `handle_task` 方法是核心逻辑，内部调用 `asyncio.run(query_xxx(conversation))`。通过 `unittest.mock.patch` 模拟该异步函数，测试三种场景：成功、需要追问、失败。
+
+```python
+class TestWeatherQueryServerHandleTask(unittest.TestCase):
+    """测试天气服务器的任务处理逻辑"""
+
+    def _create_server(self):
+        """创建天气查询服务器实例"""
+        from SmartVoyage.a2a_server.weather_server import WeatherQueryServer
+        return WeatherQueryServer()
+
+    def test_handle_task_success(self):
+        """测试正常查询成功场景"""
+        with patch('SmartVoyage.a2a_server.weather_server.asyncio.run') as mock_run, \
+             patch('SmartVoyage.a2a_server.weather_server.logger'):
+            # 模拟查询成功返回
+            mock_run.return_value = {
+                "status": "success",
+                "message": "北京2025-07-30天气：晴，25°C ~ 35°C"
+            }
+
+            server = self._create_server()
+            task = MagicMock()
+            task.message = {"content": {"text": "北京明天天气"}}
+            task.artifacts = None
+
+            result = server.handle_task(task)
+
+            # 验证任务状态为完成
+            self.assertEqual(result.status.state.value, "completed")
+            # 验证结果放入 artifacts
+            self.assertIsNotNone(result.artifacts)
+            self.assertEqual(result.artifacts[0]["parts"][0]["text"],
+                             "北京2025-07-30天气：晴，25°C ~ 35°C")
+
+    def test_handle_task_needs_input(self):
+        """测试需要用户追问场景"""
+        with patch('SmartVoyage.a2a_server.weather_server.asyncio.run') as mock_run, \
+             patch('SmartVoyage.a2a_server.weather_server.logger'):
+            mock_run.return_value = {
+                "status": "success",
+                "message": "请提供您要查询的城市名称。"
+            }
+
+            server = self._create_server()
+            task = MagicMock()
+            task.message = {"content": {"text": "明天天气怎么样"}}
+            task.artifacts = None
+
+            result = server.handle_task(task)
+
+            # 验证状态为需要输入
+            self.assertEqual(result.status.state.value, "input-required")
+
+    def test_handle_task_error(self):
+        """测试查询失败场景"""
+        with patch('SmartVoyage.a2a_server.weather_server.asyncio.run') as mock_run, \
+             patch('SmartVoyage.a2a_server.weather_server.logger'):
+            mock_run.return_value = {
+                "status": "error",
+                "message": "天气 MCP 查询出错：连接超时"
+            }
+
+            server = self._create_server()
+            task = MagicMock()
+            task.message = {"content": {"text": "北京天气"}}
+
+            result = server.handle_task(task)
+
+            # 验证状态为失败
+            self.assertEqual(result.status.state.value, "failed")
+
+    def test_handle_task_exception(self):
+        """测试 query_weather 抛出异常的场景"""
+        with patch('SmartVoyage.a2a_server.weather_server.asyncio.run') as mock_run, \
+             patch('SmartVoyage.a2a_server.weather_server.logger'):
+            mock_run.side_effect = Exception("网络异常")
+
+            server = self._create_server()
+            task = MagicMock()
+            task.message = {"content": {"text": "北京天气"}}
+
+            result = server.handle_task(task)
+
+            # 即使抛出异常，也应返回有效的失败状态
+            self.assertEqual(result.status.state.value, "failed")
+```
+
+### 4 票务和行程服务器测试
+
+票务和行程服务器的测试结构与天气服务器完全一致，区别仅在于模拟的返回内容和 Server 类名。
+
+```python
+class TestTicketQueryServerHandleTask(unittest.TestCase):
+    """测试票务服务器的任务处理逻辑"""
+
+    def _create_server(self):
+        from SmartVoyage.a2a_server.ticket_server import TicketQueryServer
+        return TicketQueryServer()
+
+    def test_handle_task_success(self):
+        """测试正常票务查询成功"""
+        with patch('SmartVoyage.a2a_server.ticket_server.asyncio.run') as mock_run, \
+             patch('SmartVoyage.a2a_server.ticket_server.logger'):
+            mock_run.return_value = {
+                "status": "success",
+                "message": "北京 到 上海 2025-07-31: 车次G1，二等座，553元"
+            }
+
+            server = self._create_server()
+            task = MagicMock()
+            task.message = {"content": {"text": "北京到上海火车票"}}
+            task.artifacts = None
+
+            result = server.handle_task(task)
+            self.assertEqual(result.status.state.value, "completed")
+
+    def test_handle_task_unknown_status(self):
+        """测试返回未知状态码的情况"""
+        with patch('SmartVoyage.a2a_server.ticket_server.asyncio.run') as mock_run, \
+             patch('SmartVoyage.a2a_server.ticket_server.logger'):
+            mock_run.return_value = {"status": "unknown"}
+
+            server = self._create_server()
+            task = MagicMock()
+            task.message = {"content": {"text": "查询"}}
+
+            result = server.handle_task(task)
+            # 未知状态应被当作失败
+            self.assertEqual(result.status.state.value, "failed")
+
+
+class TestTripQueryServerHandleTask(unittest.TestCase):
+    """测试行程服务器的任务处理逻辑"""
+
+    def _create_server(self):
+        from SmartVoyage.a2a_server.trip_server import TripQueryServer
+        return TripQueryServer()
+
+    def test_handle_task_needs_input(self):
+        """测试需要追问场景"""
+        with patch('SmartVoyage.a2a_server.trip_server.asyncio.run') as mock_run, \
+             patch('SmartVoyage.a2a_server.trip_server.logger'):
+            mock_run.return_value = {
+                "status": "success",
+                "message": "请提供您要租车的取车城市和日期。"
+            }
+
+            server = self._create_server()
+            task = MagicMock()
+            task.message = {"content": {"text": "我想租车"}}
+
+            result = server.handle_task(task)
+            self.assertEqual(result.status.state.value, "input-required")
+```
+
+### 5 运行测试
+
+```bash
+cd SmartVoyage
+python -m tests.test_agent_servers
+```
+
+预期输出：
+
+```
+test_agent_card_basic (__main__.TestWeatherAgentCard.test_agent_card_basic) ... ok
+test_weather_skill_examples (__main__.TestWeatherAgentCard.test_weather_skill_examples) ... ok
+test_agent_card_skills (__main__.TestTicketAgentCard.test_agent_card_skills) ... ok
+test_has_query_and_order_skills (__main__.TestTicketAgentCard.test_has_query_and_order_skills) ... ok
+test_has_all_trip_skills (__main__.TestTripAgentCard.test_has_all_trip_skills) ... ok
+test_handle_task_success (__main__.TestWeatherQueryServerHandleTask.test_handle_task_success) ... ok
+test_handle_task_needs_input (__main__.TestWeatherQueryServerHandleTask.test_handle_task_needs_input) ... ok
+test_handle_task_error (__main__.TestWeatherQueryServerHandleTask.test_handle_task_error) ... ok
+test_handle_task_exception (__main__.TestWeatherQueryServerHandleTask.test_handle_task_exception) ... ok
+test_handle_task_success (__main__.TestTicketQueryServerHandleTask.test_handle_task_success) ... ok
+test_handle_task_unknown_status (__main__.TestTicketQueryServerHandleTask.test_handle_task_unknown_status) ... ok
+test_handle_task_success (__main__.TestTripQueryServerHandleTask.test_handle_task_success) ... ok
+test_handle_task_needs_input (__main__.TestTripQueryServerHandleTask.test_handle_task_needs_input) ... ok
+...
+----------------------------------------------------------------------
+Ran 14 tests in 0.03s
+
+OK
 ```
