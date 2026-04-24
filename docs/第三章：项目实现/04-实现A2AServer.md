@@ -1,17 +1,9 @@
 ## 学习目标
 
-* 理解 LangChain Agent + MCP Tools 的 Agent 执行模式
-
 * 理解 MCP 客户端连接与工具加载机制
-
-* 理解 AgentCard 的定义与作用
-
 * 理解 A2A 服务器的任务处理与状态管理
-
 * 理解 Agent 执行循环：分析输入 → 选择工具 → 获取结果 → 格式化回复
-
 * 掌握 AgentCard 的验证方法：检查名称、URL、技能数量和类型
-
 * 掌握集成测试方法：直接调用查询函数验证 Agent + MCP 完整链路
 
 
@@ -32,7 +24,13 @@ weather\_server.py：天气代理服务器，使用 **LangChain Agent + MCP Tool
 
 ### 1 导包与配置
 
-位置：SmartVoyage/a2a_server/weather_server.py
+**位置**：SmartVoyage/a2a_server/weather_server.py
+
+在编写天气 Agent 之前，需要先导入所需的库并初始化 LLM 和 MCP 客户端。这里涉及三组依赖：
+
+- **MCP 客户端**（`ClientSession`、`streamablehttp_client`）：用于连接后端的天气 MCP 服务器（端口 8002）
+- **A2A 协议库**（`python_a2a`）：用于定义 AgentCard、处理任务状态
+- **LangChain Agent**（`ChatOpenAI`、`AgentExecutor`、`load_mcp_tools`）：构建智能 Agent，让它能自主选择调用 MCP 工具
 
 ```python
 import json
@@ -66,7 +64,16 @@ llm = ChatOpenAI(
 MCP_URL = "http://127.0.0.1:8002/mcp"
 ```
 
+> **说明**：每个 Agent 服务器的导包结构基本相同，区别仅在于 `MCP_URL` 指向的端口号不同。天气 Agent 连接 8002，票务 Agent 连接 8001，行程 Agent 连接 8003。
+
 ### 2 查询函数
+
+这是天气 Agent 的核心逻辑。整个流程分为四步：
+
+1. **连接 MCP 服务器**：通过 `streamablehttp_client` 建立 HTTP 通信通道，创建 `ClientSession` 并初始化
+2. **加载 MCP 工具**：`load_mcp_tools(session)` 会自动从 MCP 服务器获取所有已注册的工具（此处为 `query_weather`）
+3. **创建 Agent**：通过 LangChain 的 `create_tool_calling_agent` 将 LLM、工具和系统 Prompt 组合成一个 Agent，它具备分析用户输入、选择合适工具、获取结果并格式化回复的能力
+4. **执行 Agent**：调用 `agent_executor.ainvoke()` 传入用户对话，Agent 会自动完成"分析 → 选工具 → 调用 → 获取结果 → 回复"的循环
 
 ```python
 async def query_weather(conversation: str) -> dict:
@@ -116,7 +123,11 @@ async def query_weather(conversation: str) -> dict:
         return {"status": "error", "message": f"天气 MCP 查询出错：{str(e)}"}
 ```
 
+> **说明**：系统 Prompt 中的 `current_date` 变量会在运行时注入当天的日期，这样 Agent 知道"今天"是哪一天，可以正确理解"明天"、"后天"等相对日期表达。异常处理同时覆盖了 `ExceptionGroup`（LangChain 可能抛出）和 `BaseException`（包括取消等），确保任何错误都能返回友好的错误信息。
+
 ### 3 AgentCard 定义
+
+`AgentCard` 是 A2A 协议中用于描述 Agent 身份和能力的名片。当主助手（ChatService）需要与子 Agent 通信时，会先读取 AgentCard 了解该 Agent 能提供哪些服务。每个 AgentCard 包含名称、描述、服务 URL、技能列表等信息。
 
 ```python
 agent_card = AgentCard(
@@ -135,7 +146,17 @@ agent_card = AgentCard(
 )
 ```
 
+> **说明**：`url` 是本 Agent 服务器的监听地址（端口 5005），`examples` 用于演示用户可能的输入方式。
+
 ### 4 WeatherQueryServer 类
+
+`WeatherQueryServer` 是 A2A 协议的服务器实现，继承自 `A2AServer`。它的工作是接收来自主助手的任务请求，调用 `query_weather` 函数获取结果，然后根据结果设置不同的任务状态：
+
+- **COMPLETED**：查询成功且返回了完整答案，将结果写入 `task.artifacts`
+- **INPUT_REQUIRED**：Agent 需要更多信息（如缺少城市或日期），将追问消息返回给主助手
+- **FAILED**：查询出错，返回错误信息
+
+其中 `handle_task` 方法是 A2A 协议的核心入口，每次收到任务时自动调用。
 
 ```python
 class WeatherQueryServer(A2AServer):
@@ -191,7 +212,11 @@ class WeatherQueryServer(A2AServer):
             return task
 ```
 
+> **说明**：`asyncio.run(query_weather(conversation))` 在同步方法中调用异步函数，这是因为 A2A 协议的 `handle_task` 是同步接口。实际执行时，这里会先连接 MCP 服务器、加载工具、运行 Agent，最后返回结果。
+
 ### 5 运行天气 Agent 服务器
+
+在代码块末尾，通过 `run_server()` 启动 A2A 服务器，监听端口 5005。启动前会打印 AgentCard 信息，方便确认服务器状态。
 
 ```python
 if __name__ == "__main__":
@@ -209,6 +234,14 @@ if __name__ == "__main__":
 
 ## 二、票务 Agent 服务器
 
+票务 Agent 的结构与天气 Agent 基本一致，区别在于：
+
+- 连接 **8001 端口**的票务 MCP 服务器
+- 系统 Prompt 改为票务相关（火车票、机票、演唱会票的查询和预定）
+- AgentCard 定义了 **6 个技能**（3 个查询 + 3 个预定）
+
+以下只标注与天气 Agent 的不同之处，相同的导包和异常处理不再重复讲解。
+
 ticket\_server.py：统一的票务代理服务器，使用 **LangChain Agent + MCP Tools** 模式处理用户的票务查询和预定请求。
 
 **作用**：处理用户自然语言查询，通过 Agent 自主选择调用 MCP 工具（查询或预定），返回用户友好的文本结果。
@@ -223,7 +256,9 @@ ticket\_server.py：统一的票务代理服务器，使用 **LangChain Agent + 
 
 ### 1 导包与配置
 
-位置：SmartVoyage/a2a_server/ticket_server.py
+**位置**：SmartVoyage/a2a_server/ticket_server.py
+
+与天气 Agent 相同的导包结构，唯一区别是 `MCP_URL` 指向 8001 端口（票务 MCP 服务器）。
 
 ```python
 import json
@@ -258,6 +293,8 @@ MCP_URL = "http://127.0.0.1:8001/mcp"
 ```
 
 ### 2 查询函数
+
+票务查询函数与天气的结构完全相同，区别仅在于系统 Prompt。这里需要 Agent 能处理更多场景：火车票、机票、演唱会票的查询和预定，每种类型需要的参数也不同（出发城市、到达城市、日期、座位类型/舱位等）。MCP 服务器共注册了 6 个工具（3 查询 + 3 预定），Agent 会根据用户输入自动选择合适的工具。
 
 ```python
 async def query_tickets(conversation: str) -> dict:
@@ -299,6 +336,8 @@ async def query_tickets(conversation: str) -> dict:
 ```
 
 ### 3 AgentCard 定义
+
+票务 AgentCard 定义了 6 个技能，分为查询和预定两类。主助手通过读取这些技能信息，可以了解票务 Agent 的能力范围。
 
 ```python
 agent_card = AgentCard(
@@ -343,6 +382,8 @@ agent_card = AgentCard(
 ```
 
 ### 4 TicketQueryServer 类
+
+票务服务器的 `handle_task` 实现与天气服务器完全一致，都是提取输入、调用查询函数、根据结果设置任务状态。此处不再重复讲解。
 
 ```python
 class TicketQueryServer(A2AServer):
@@ -411,15 +452,17 @@ if __name__ == "__main__":
 
 ## 三、行程 Agent 服务器
 
-trip\_server.py：行程管家代理服务器，使用 **LangChain Agent + MCP Tools** 模式处理用户的租车、旅游团、保险查询及预订请求。
+trip\_server.py：行程管家代理服务器，处理租车、旅游团、保险的查询及预订请求。与前两个 Agent 结构相同，区别在于：
 
-**作用**：处理用户自然语言查询，通过 Agent 自主选择调用 MCP 工具，返回用户友好的文本结果。
-
-**项目中的定位**：执行层，接收主助手路由的任务，调用 MCP 工具（端口 8003），返回格式化结果。
+- 连接 **8003 端口**的行程 MCP 服务器
+- 系统 Prompt 需要处理更多业务场景（租车需要取车/还车城市和日期，旅游团使用语义搜索，保险可直接查询）
+- AgentCard 定义了 6 个技能
 
 ### 1 导包与配置
 
-位置：SmartVoyage/a2a_server/trip_server.py
+**位置**：SmartVoyage/a2a_server/trip_server.py
+
+与前两个 Agent 相同的导包，`MCP_URL` 指向 8003 端口。
 
 ```python
 import json
@@ -453,6 +496,8 @@ MCP_URL = "http://127.0.0.1:8003/mcp"
 ```
 
 ### 2 查询函数
+
+行程 Agent 的 Prompt 最为复杂，因为涉及三种不同类型的服务。其中旅游团查询使用**语义搜索**（Milvus 向量库），与租车/保险的精确查询方式不同。
 
 ```python
 async def query_trip(conversation: str) -> dict:
@@ -501,6 +546,8 @@ async def query_trip(conversation: str) -> dict:
 
 ### 3 AgentCard 定义
 
+行程 AgentCard 同样定义了 6 个技能（3 查询 + 3 预定），涵盖租车、旅游团、保险三个场景。
+
 ```python
 agent_card = AgentCard(
     name="TripAssistant",
@@ -520,6 +567,8 @@ agent_card = AgentCard(
 ```
 
 ### 4 TripQueryServer 类
+
+行程服务器的 `handle_task` 实现与前两个完全一致，都是提取输入、调用查询函数、根据结果设置任务状态。
 
 ```python
 class TripQueryServer(A2AServer):
