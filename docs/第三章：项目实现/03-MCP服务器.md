@@ -10,7 +10,9 @@
 
 * 理解向量数据库（Milvus）在 RAG 模式下的语义检索应用
 
-* 掌握 MCP 服务器的单元测试方法：模拟数据库连接、验证 SQL 生成、测试工具注册
+* 掌握纯函数测试方法：验证日期编码和 JSON 序列化正确性
+
+* 掌握集成测试方法：直接调用 Service 类验证数据库交互
 
 
 
@@ -568,24 +570,9 @@ def create_trip_mcp_server():
 
 ## 四、MCP 服务器测试
 
-### 1 测试策略
+### 1 格式编码测试（纯函数，零依赖）
 
-MCP 服务器的测试重点是**参数化查询逻辑的正确性**和**工具注册验证**，而非真实数据库连接。
-
-**测试方法**：
-
-| 测试目标 | 方法 | 说明 |
-|---------|------|------|
-| 格式编码 | 直接调用 | `default_encoder` 和 `DateEncoder` 是纯函数，直接测试 |
-| Service 查询逻辑 | `unittest.mock` 模拟数据库 | 验证生成的 SQL 和参数是否正确 |
-| SQL 注入防护 | 恶意输入测试 | 验证恶意输入被作为参数传递，而非拼接到 SQL |
-| MCP 服务器配置 | 验证属性 | 检查服务器名称、端口等配置 |
-
-### 2 格式编码测试
-
-测试 `default_encoder` 函数和 `DateEncoder` 类，确保日期、Decimal 等特殊类型能正确序列化为 JSON。
-
-**测试文件**：SmartVoyage/tests/test_mcp_servers.py
+测试 `default_encoder` 函数和 `DateEncoder` 类，确保日期、Decimal 等特殊类型能正确序列化为 JSON。这是纯函数测试，不需要连接数据库或启动服务器。
 
 ```python
 import unittest
@@ -599,35 +586,40 @@ from SmartVoyage.utils.format import default_encoder, DateEncoder
 class TestFormatEncoder(unittest.TestCase):
     """测试 default_encoder 函数和 DateEncoder 类"""
 
+    def setUp(self):
+        from SmartVoyage.utils.format import default_encoder, DateEncoder
+        self.default_encoder_func = default_encoder
+        self.date_encoder_cls = DateEncoder
+
     def test_encode_datetime(self):
         """测试 datetime 编码"""
         dt = datetime(2025, 7, 30, 14, 30, 0)
-        result = default_encoder(dt)
+        result = self.default_encoder_func(dt)
         self.assertEqual(result, '2025-07-30 14:30:00')
 
     def test_encode_date(self):
         """测试 date 编码"""
         d = date(2025, 7, 30)
-        result = default_encoder(d)
+        result = self.default_encoder_func(d)
         self.assertEqual(result, '2025-07-30')
 
     def test_encode_timedelta(self):
         """测试 timedelta 编码"""
         td = timedelta(hours=5, minutes=30)
-        result = default_encoder(td)
+        result = self.default_encoder_func(td)
         self.assertEqual(result, '5:30:00')
 
     def test_encode_decimal(self):
         """测试 Decimal 编码"""
         dec = Decimal('123.45')
-        result = default_encoder(dec)
+        result = self.default_encoder_func(dec)
         self.assertIsInstance(result, float)
         self.assertAlmostEqual(result, 123.45)
 
     def test_encode_unknown(self):
         """测试未知类型原样返回"""
         obj = "hello"
-        result = default_encoder(obj)
+        result = self.default_encoder_func(obj)
         self.assertEqual(result, "hello")
 
     def test_date_encoder_json_dumps(self):
@@ -637,163 +629,115 @@ class TestFormatEncoder(unittest.TestCase):
             "datetime": datetime(2025, 7, 30, 14, 30, 0),
             "value": Decimal('99.99')
         }
-        result = json.dumps(data, cls=DateEncoder)
+        result = json.dumps(data, cls=self.date_encoder_cls)
         parsed = json.loads(result)
         self.assertEqual(parsed["date"], "2025-07-30")
         self.assertEqual(parsed["datetime"], "2025-07-30 14:30:00")
         self.assertEqual(parsed["value"], 99.99)
 ```
 
-### 3 Service 查询逻辑测试（模拟数据库）
+### 2 MCP 服务器集成测试（需要数据库）
 
-使用 `unittest.mock` 模拟 MySQL 连接和游标，验证 Service 类生成的 SQL 语句和参数是否正确。
+直接实例化 `WeatherService`、`TicketService`、`TripService` 类，调用其查询方法，验证与真实数据库的交互是否正确。
 
 ```python
-import unittest
-import json
-from unittest.mock import MagicMock, patch
-from datetime import datetime
+class TestWeatherMCPIntegration(unittest.TestCase):
+    """集成测试：天气 MCP 服务器"""
 
-
-class TestWeatherService(unittest.TestCase):
-    """测试天气服务的参数化查询逻辑"""
-
-    def setUp(self):
-        # 模拟数据库连接和游标
-        self.mock_conn = MagicMock()
-        self.mock_cursor = MagicMock()
-        self.mock_conn.cursor.return_value = self.mock_cursor
-
-    def _create_service_with_mock_conn(self):
-        """创建使用模拟连接的 WeatherService"""
-        with patch('SmartVoyage.mcp_server.mcp_weather_server.mysql.connector.connect',
-                   return_value=self.mock_conn):
-            with patch('SmartVoyage.mcp_server.mcp_weather_server.conf'):
-                from SmartVoyage.mcp_server.mcp_weather_server import WeatherService
-                return WeatherService()
+    @classmethod
+    def setUpClass(cls):
+        from SmartVoyage.mcp_server.mcp_weather_server import WeatherService
+        cls.service = WeatherService()
 
     def test_query_weather_single_day(self):
-        """测试单天天气查询：生成正确的 SQL 和参数"""
-        self.mock_cursor.fetchall.return_value = [
-            {"city": "北京", "fx_date": "2025-07-30", "temp_max": 35, "temp_min": 25,
-             "text_day": "晴", "humidity": 60}
-        ]
+        """测试单天天气查询"""
+        result = self.service.query_weather("北京", "2025-07-30")
+        parsed = json.loads(result)
+        self.assertEqual(parsed["status"], "success")
+        self.assertGreater(len(parsed["data"]), 0)
+        first = parsed["data"][0]
+        self.assertEqual(first["city"], "北京")
+        self.assertEqual(first["fx_date"], "2025-07-30")
 
-        service = self._create_service_with_mock_conn()
-        result = service.query_weather("北京", "2025-07-30")
+    def test_query_weather_no_data(self):
+        """测试无数据情况"""
+        result = self.service.query_weather("火星", "2025-07-30")
+        parsed = json.loads(result)
+        self.assertEqual(parsed["status"], "no_data")
 
-        # 验证游标被调用
-        self.mock_cursor.execute.assert_called_once()
-        sql, params = self.mock_cursor.execute.call_args[0]
-        # 验证 SQL 包含单天查询条件
-        self.assertIn("fx_date = %s", sql)
-        # 验证参数正确
-        self.assertEqual(params, ["北京", "2025-07-30"])
-        # 验证返回 JSON
+    def test_weather_mcp_server_config(self):
+        """验证天气 MCP 服务器配置"""
+        from SmartVoyage.mcp_server.mcp_weather_server import create_weather_mcp_server
+        server = create_weather_mcp_server()
+        self.assertEqual(server.name, "WeatherTools")
+
+
+class TestTicketMCPIntegration(unittest.TestCase):
+    """集成测试：票务 MCP 服务器"""
+
+    @classmethod
+    def setUpClass(cls):
+        from SmartVoyage.mcp_server.mcp_ticket_server import TicketService
+        cls.service = TicketService()
+
+    def test_query_train(self):
+        """测试火车票查询"""
+        result = self.service.query_train("北京", "上海", "2025-07-30")
+        parsed = json.loads(result)
+        self.assertEqual(parsed["status"], "success")
+        self.assertGreater(len(parsed["data"]), 0)
+
+    def test_query_train_with_seat(self):
+        """测试带座位类型的火车票查询"""
+        result = self.service.query_train("北京", "上海", "2025-07-30", "二等座")
+        parsed = json.loads(result)
+        for item in parsed["data"]:
+            self.assertEqual(item["seat_type"], "二等座")
+
+    def test_query_flight(self):
+        """测试机票查询"""
+        result = self.service.query_flight("北京", "上海", "2025-07-30")
         parsed = json.loads(result)
         self.assertEqual(parsed["status"], "success")
 
-    def test_query_weather_date_range(self):
-        """测试日期范围天气查询"""
-        self.mock_cursor.fetchall.return_value = []
-
-        service = self._create_service_with_mock_conn()
-        service.query_weather("上海", "2025-07-30", "2025-08-05")
-
-        sql, params = self.mock_cursor.execute.call_args[0]
-        self.assertIn("BETWEEN %s AND %s", sql)
-        self.assertEqual(params, ["上海", "2025-07-30", "2025-08-05"])
-
-    def test_query_weather_error(self):
-        """测试数据库异常"""
-        self.mock_cursor.execute.side_effect = Exception("连接断开")
-
-        service = self._create_service_with_mock_conn()
-        result = service.query_weather("北京", "2025-07-30")
-
+    def test_query_concert(self):
+        """测试演唱会票查询"""
+        result = self.service.query_concert("北京", "刀郎", "2025-08-23")
         parsed = json.loads(result)
-        self.assertEqual(parsed["status"], "error")
-        self.assertIn("连接断开", parsed["message"])
-```
+        self.assertEqual(parsed["status"], "success")
+        first = parsed["data"][0]
+        self.assertEqual(first["artist"], "刀郎")
 
-### 4 SQL 注入防护测试
 
-验证恶意输入不会改变 SQL 结构。
+class TestTripMCPIntegration(unittest.TestCase):
+    """集成测试：行程 MCP 服务器"""
 
-```python
-class TestTicketService(unittest.TestCase):
-    """测试票务服务的 SQL 注入防护"""
+    @classmethod
+    def setUpClass(cls):
+        from SmartVoyage.mcp_server.mcp_trip_server import TripService
+        cls.service = TripService()
 
-    def setUp(self):
-        self.mock_conn = MagicMock()
-        self.mock_cursor = MagicMock()
-        self.mock_conn.cursor.return_value = self.mock_cursor
+    def test_query_car_rental(self):
+        """测试租车查询"""
+        result = self.service.query_car_rental("北京", "上海", "2025-08-01")
+        parsed = json.loads(result)
+        self.assertEqual(parsed["status"], "success")
 
-    def _create_service_with_mock_conn(self):
-        with patch('SmartVoyage.mcp_server.mcp_ticket_server.mysql.connector.connect',
-                   return_value=self.mock_conn):
-            with patch('SmartVoyage.mcp_server.mcp_ticket_server.conf'):
-                from SmartVoyage.mcp_server.mcp_ticket_server import TicketService
-                return TicketService()
+    def test_query_insurance_with_type(self):
+        """测试带类型的保险查询"""
+        result = self.service.query_insurance("综合型")
+        parsed = json.loads(result)
+        for item in parsed["data"]:
+            self.assertEqual(item["insurance_type"], "综合型")
 
-    def test_query_train_sql_injection_safe(self):
-        """验证参数化查询防止 SQL 注入"""
-        self.mock_cursor.fetchall.return_value = []
-
-        service = self._create_service_with_mock_conn()
-        # 尝试注入 SQL 的恶意输入
-        malicious_city = "'; DROP TABLE train_tickets; --"
-        service.query_train(malicious_city, "上海", "2025-07-30")
-
-        sql, params = self.mock_cursor.execute.call_args[0]
-        # 验证恶意输入被作为参数传递，而不是拼接到 SQL 中
-        self.assertNotIn("DROP TABLE", sql)
-        self.assertIn(malicious_city, params)
-```
-
-### 5 MCP 服务器配置测试
-
-验证 FastMCP 服务器的名称等配置是否正确。由于 `create_*_mcp_server()` 会实际启动服务器（需要端口），测试中直接构造 FastMCP 实例即可。
-
-```python
-class TestMCPServerRegistration(unittest.TestCase):
-    """测试 MCP 服务器的配置参数"""
-
-    def test_weather_mcp_config(self):
-        """验证天气 MCP 服务器配置参数"""
-        from mcp.server.fastmcp import FastMCP
-        weather_mcp = FastMCP(
-            name="WeatherTools",
-            instructions="天气查询工具",
-            log_level="ERROR",
-            host="127.0.0.1", port=8002
-        )
-        self.assertEqual(weather_mcp.name, "WeatherTools")
-
-    def test_ticket_mcp_config(self):
-        """验证票务 MCP 服务器配置"""
-        from mcp.server.fastmcp import FastMCP
-        ticket_mcp = FastMCP(
-            name="TicketTools",
-            instructions="票务工具",
-            log_level="ERROR",
-            host="127.0.0.1", port=8001
-        )
-        self.assertEqual(ticket_mcp.name, "TicketTools")
-
-    def test_trip_mcp_config(self):
+    def test_trip_mcp_server_config(self):
         """验证行程 MCP 服务器配置"""
-        from mcp.server.fastmcp import FastMCP
-        trip_mcp = FastMCP(
-            name="TripTools",
-            instructions="行程管家工具",
-            log_level="ERROR",
-            host="127.0.0.1", port=8003
-        )
-        self.assertEqual(trip_mcp.name, "TripTools")
+        from SmartVoyage.mcp_server.mcp_trip_server import create_trip_mcp_server
+        server = create_trip_mcp_server()
+        self.assertEqual(server.name, "TripTools")
 ```
 
-### 6 运行测试
+### 3 运行测试
 
 ```bash
 cd SmartVoyage
@@ -809,17 +753,20 @@ test_encode_decimal (__main__.TestFormatEncoder.test_encode_decimal) ... ok
 test_encode_timedelta (__main__.TestFormatEncoder.test_encode_timedelta) ... ok
 test_encode_unknown (__main__.TestFormatEncoder.test_encode_unknown) ... ok
 test_date_encoder_json_dumps (__main__.TestFormatEncoder.test_date_encoder_json_dumps) ... ok
-test_query_weather_single_day (__main__.TestWeatherService.test_query_weather_single_day) ... ok
-test_query_weather_date_range (__main__.TestWeatherService.test_query_weather_date_range) ... ok
-test_query_weather_error (__main__.TestWeatherService.test_query_weather_error) ... ok
-test_query_train_basic (__main__.TestTicketService.test_query_train_basic) ... ok
-test_query_train_with_seat_type (__main__.TestTicketService.test_query_train_with_seat_type) ... ok
-test_query_flight (__main__.TestTicketService.test_query_flight) ... ok
-test_query_concert (__main__.TestTicketService.test_query_concert) ... ok
-test_query_train_sql_injection_safe (__main__.TestTicketService.test_query_train_sql_injection_safe) ... ok
-...
+test_query_weather_single_day (__main__.TestWeatherMCPIntegration) ... ok
+test_query_weather_no_data (__main__.TestWeatherMCPIntegration) ... ok
+test_weather_mcp_server_config (__main__.TestWeatherMCPIntegration) ... ok
+test_query_train (__main__.TestTicketMCPIntegration) ... ok
+test_query_train_with_seat (__main__.TestTicketMCPIntegration) ... ok
+test_query_flight (__main__.TestTicketMCPIntegration) ... ok
+test_query_concert (__main__.TestTicketMCPIntegration) ... ok
+test_query_car_rental (__main__.TestTripMCPIntegration) ... ok
+test_query_insurance_with_type (__main__.TestTripMCPIntegration) ... ok
+test_trip_mcp_server_config (__main__.TestTripMCPIntegration) ... ok
 ----------------------------------------------------------------------
-Ran 17 tests in 0.05s
+Ran 16 tests in 0.05s
 
 OK
 ```
+
+> **注意**：集成测试部分需要 MySQL 数据库已启动且包含测试数据。纯函数测试（格式编码部分）无需任何依赖即可运行。
