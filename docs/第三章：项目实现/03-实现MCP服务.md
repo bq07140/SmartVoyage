@@ -1,19 +1,8 @@
 ## 学习目标
 
-* 理解 MCP（Model Context Protocol）服务器的基本架构
-
-* 理解参数化查询模式及其防 SQL 注入原理
-
 * 理解 MCP 工具注册与 FastAPI 启动流程
-
-* 理解双数据源（数据库 / 第三方 API）的切换机制
-
-* 理解向量数据库（Milvus）在 RAG 模式下的语义检索应用
-
-* 掌握纯函数测试方法：验证日期编码和 JSON 序列化正确性
-
-* 掌握集成测试方法：直接调用 Service 类验证数据库交互
-
+* 理解票务MCP服务的实现
+* 理解行程MCP的实现，以及和RAG的结合
 * 了解单元测试与集成测试的区别，以及 unittest 框架的基本用法
 
 
@@ -572,11 +561,11 @@ def create_trip_mcp_server():
 
 ## 四、MCP 服务器测试
 
-### 0 测试基础知识
+### 1 测试基础知识
 
 在编写测试代码之前，先了解三个基本概念：**单元测试**、**集成测试**和 **unittest 框架**。
 
-#### （1）什么是单元测试
+#### 1.1 什么是单元测试
 
 单元测试（Unit Test）是对代码中**最小可测试单元**（通常是单个函数、方法或类）进行验证的测试方式。它的特点：
 
@@ -594,7 +583,7 @@ def test_encode_datetime(self):
     self.assertEqual(result, '2025-07-30 14:30:00')
 ```
 
-#### （2）什么是集成测试
+#### 1.2 什么是集成测试
 
 集成测试（Integration Test）用于验证**多个组件协同工作**是否正确。它的特点：
 
@@ -613,7 +602,7 @@ def test_query_weather_single_day(self):
     self.assertEqual(parsed["data"][0]["city"], "北京")
 ```
 
-#### （3）unittest 框架
+#### 1.3 unittest 框架
 
 `unittest` 是 Python 标准库自带的测试框架，核心概念：
 
@@ -664,7 +653,7 @@ python -m unittest tests.test_mcp_servers.TestFormatEncoder.test_encode_date
 
 ---
 
-### 1 格式编码测试（纯函数，零依赖）
+### 2 格式编码测试（纯函数，零依赖）
 
 测试 `default_encoder` 函数和 `DateEncoder` 类，确保日期、Decimal 等特殊类型能正确序列化为 JSON。这是纯函数测试，不需要连接数据库或启动服务器。
 
@@ -730,7 +719,7 @@ class TestFormatEncoder(unittest.TestCase):
         self.assertEqual(parsed["value"], 99.99)
 ```
 
-### 2 MCP 服务器集成测试（需要数据库）
+### 3 MCP 服务器集成测试（需要数据库）
 
 直接实例化 `WeatherService`、`TicketService`、`TripService` 类，调用其查询方法，验证与真实数据库的交互是否正确。
 
@@ -831,7 +820,7 @@ class TestTripMCPIntegration(unittest.TestCase):
         self.assertEqual(server.name, "TripTools")
 ```
 
-### 3 运行测试
+### 4 运行测试
 
 ```bash
 cd SmartVoyage
