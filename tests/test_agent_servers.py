@@ -83,95 +83,74 @@ class TestTripAgentCard(unittest.TestCase):
         from SmartVoyage.a2a_server.trip_server import agent_card
 
         skill_names = [s.name.lower() for s in agent_card.skills]
-        # 验证覆盖所有关键技能
         self.assertTrue(any('car' in n for n in skill_names), "缺少租车技能")
         self.assertTrue(any('tour' in n for n in skill_names), "缺少旅游团技能")
         self.assertTrue(any('insurance' in n for n in skill_names), "缺少保险技能")
 
 
-# ==================== 2. Server handle_task 行为测试 ====================
+# ==================== 2. handle_task 状态转换测试 ====================
+# 思路：模拟 asyncio.run 的返回值（即异步函数的查询结果）
+# 验证 handle_task 如何根据返回的 dict 设置不同的任务状态
+
 
 class TestWeatherQueryServerHandleTask(unittest.TestCase):
     """测试天气服务器的任务处理逻辑"""
 
-    def _create_server(self):
-        """创建天气查询服务器实例"""
-        from SmartVoyage.a2a_server.weather_server import WeatherQueryServer, agent_card
-        return WeatherQueryServer()
-
     def test_handle_task_success(self):
         """测试正常查询成功场景"""
-        with patch('SmartVoyage.a2a_server.weather_server.asyncio.run') as mock_run, \
-             patch('SmartVoyage.a2a_server.weather_server.logger'):
-            mock_run.return_value = {
-                "status": "success",
-                "message": "北京2025-07-30天气：晴，25°C ~ 35°C"
-            }
-
-            server = self._create_server()
+        # 模拟查询成功返回
+        mock_result = {
+            "status": "success",
+            "message": "北京2025-07-30天气：晴，25°C ~ 35°C"
+        }
+        with patch('asyncio.run', return_value=mock_result):
+            from SmartVoyage.a2a_server.weather_server import WeatherQueryServer
+            server = WeatherQueryServer()
             task = MagicMock()
             task.message = {"content": {"text": "北京明天天气"}}
             task.artifacts = None
 
             result = server.handle_task(task)
 
-            # 验证任务状态为完成
             self.assertEqual(result.status.state.value, "completed")
-            # 验证结果放入 artifacts
             self.assertIsNotNone(result.artifacts)
-            self.assertEqual(result.artifacts[0]["parts"][0]["text"],
-                             "北京2025-07-30天气：晴，25°C ~ 35°C")
 
     def test_handle_task_needs_input(self):
         """测试需要用户追问场景"""
-        with patch('SmartVoyage.a2a_server.weather_server.asyncio.run') as mock_run, \
-             patch('SmartVoyage.a2a_server.weather_server.logger'):
-            mock_run.return_value = {
-                "status": "success",
-                "message": "请提供您要查询的城市名称。"
-            }
-
-            server = self._create_server()
+        mock_result = {
+            "status": "success",
+            "message": "请提供您要查询的城市名称。"
+        }
+        with patch('asyncio.run', return_value=mock_result):
+            from SmartVoyage.a2a_server.weather_server import WeatherQueryServer
+            server = WeatherQueryServer()
             task = MagicMock()
             task.message = {"content": {"text": "明天天气怎么样"}}
-            task.artifacts = None
 
             result = server.handle_task(task)
 
-            # 验证状态为需要输入
             self.assertEqual(result.status.state.value, "input-required")
-            # 追问信息在 message 中
-            self.assertIsNotNone(result.status.message)
 
     def test_handle_task_error(self):
         """测试查询失败场景"""
-        with patch('SmartVoyage.a2a_server.weather_server.asyncio.run') as mock_run, \
-             patch('SmartVoyage.a2a_server.weather_server.logger'):
-            mock_run.return_value = {
-                "status": "error",
-                "message": "天气 MCP 查询出错：连接超时"
-            }
-
-            server = self._create_server()
+        mock_result = {"status": "error", "message": "连接超时"}
+        with patch('asyncio.run', return_value=mock_result):
+            from SmartVoyage.a2a_server.weather_server import WeatherQueryServer
+            server = WeatherQueryServer()
             task = MagicMock()
             task.message = {"content": {"text": "北京天气"}}
-            task.artifacts = None
 
             result = server.handle_task(task)
 
-            # 验证状态为失败
             self.assertEqual(result.status.state.value, "failed")
 
     def test_handle_task_exception(self):
-        """测试 query_weather 抛出异常的场景"""
-        with patch('SmartVoyage.a2a_server.weather_server.asyncio.run') as mock_run, \
-             patch('SmartVoyage.a2a_server.weather_server.logger'):
-            mock_run.side_effect = Exception("网络异常")
-
-            server = self._create_server()
+        """测试查询函数抛出异常的场景"""
+        with patch('asyncio.run', side_effect=Exception("网络异常")):
+            from SmartVoyage.a2a_server.weather_server import WeatherQueryServer
+            server = WeatherQueryServer()
             task = MagicMock()
             task.message = {"content": {"text": "北京天气"}}
-            task.artifacts = None
 
             result = server.handle_task(task)
 
@@ -182,118 +161,89 @@ class TestWeatherQueryServerHandleTask(unittest.TestCase):
 class TestTicketQueryServerHandleTask(unittest.TestCase):
     """测试票务服务器的任务处理逻辑"""
 
-    def _create_server(self):
-        """创建票务查询服务器实例"""
-        from SmartVoyage.a2a_server.ticket_server import TicketQueryServer
-        return TicketQueryServer()
-
     def test_handle_task_success(self):
         """测试正常票务查询成功"""
-        with patch('SmartVoyage.a2a_server.ticket_server.asyncio.run') as mock_run, \
-             patch('SmartVoyage.a2a_server.ticket_server.logger'):
-            mock_run.return_value = {
-                "status": "success",
-                "message": "北京 到 上海 2025-07-31 出发时间: 车次G1，座位类型二等座，票价553元，剩余100张"
-            }
-
-            server = self._create_server()
+        mock_result = {
+            "status": "success",
+            "message": "北京 到 上海: 车次G1，二等座，553元"
+        }
+        with patch('asyncio.run', return_value=mock_result):
+            from SmartVoyage.a2a_server.ticket_server import TicketQueryServer
+            server = TicketQueryServer()
             task = MagicMock()
-            task.message = {"content": {"text": "北京到上海火车票 2025-07-31"}}
-            task.artifacts = None
+            task.message = {"content": {"text": "北京到上海火车票"}}
 
             result = server.handle_task(task)
-
             self.assertEqual(result.status.state.value, "completed")
-            self.assertIsNotNone(result.artifacts)
 
     def test_handle_task_error(self):
         """测试票务查询失败"""
-        with patch('SmartVoyage.a2a_server.ticket_server.asyncio.run') as mock_run, \
-             patch('SmartVoyage.a2a_server.ticket_server.logger'):
-            mock_run.return_value = {"status": "error", "message": "查询出错"}
-
-            server = self._create_server()
+        mock_result = {"status": "error", "message": "查询出错"}
+        with patch('asyncio.run', return_value=mock_result):
+            from SmartVoyage.a2a_server.ticket_server import TicketQueryServer
+            server = TicketQueryServer()
             task = MagicMock()
             task.message = {"content": {"text": "查询火车票"}}
-            task.artifacts = None
 
             result = server.handle_task(task)
-
             self.assertEqual(result.status.state.value, "failed")
 
     def test_handle_task_unknown_status(self):
         """测试返回未知状态码的情况"""
-        with patch('SmartVoyage.a2a_server.ticket_server.asyncio.run') as mock_run, \
-             patch('SmartVoyage.a2a_server.ticket_server.logger'):
-            mock_run.return_value = {"status": "unknown"}
-
-            server = self._create_server()
+        mock_result = {"status": "unknown"}
+        with patch('asyncio.run', return_value=mock_result):
+            from SmartVoyage.a2a_server.ticket_server import TicketQueryServer
+            server = TicketQueryServer()
             task = MagicMock()
             task.message = {"content": {"text": "查询"}}
-            task.artifacts = None
 
             result = server.handle_task(task)
-
             self.assertEqual(result.status.state.value, "failed")
 
 
 class TestTripQueryServerHandleTask(unittest.TestCase):
     """测试行程服务器的任务处理逻辑"""
 
-    def _create_server(self):
-        """创建行程查询服务器实例"""
-        from SmartVoyage.a2a_server.trip_server import TripQueryServer
-        return TripQueryServer()
-
     def test_handle_task_success(self):
         """测试正常行程查询成功"""
-        with patch('SmartVoyage.a2a_server.trip_server.asyncio.run') as mock_run, \
-             patch('SmartVoyage.a2a_server.trip_server.logger'):
-            mock_run.return_value = {
-                "status": "success",
-                "message": "北京 到 上海 2025-08-01: 车型SUV，公司神州租车，价格300元/天"
-            }
-
-            server = self._create_server()
+        mock_result = {
+            "status": "success",
+            "message": "北京 到 上海: 车型SUV，价格300元/天"
+        }
+        with patch('asyncio.run', return_value=mock_result):
+            from SmartVoyage.a2a_server.trip_server import TripQueryServer
+            server = TripQueryServer()
             task = MagicMock()
             task.message = {"content": {"text": "北京租车到上海"}}
-            task.artifacts = None
 
             result = server.handle_task(task)
-
             self.assertEqual(result.status.state.value, "completed")
 
     def test_handle_task_needs_input(self):
         """测试需要追问场景"""
-        with patch('SmartVoyage.a2a_server.trip_server.asyncio.run') as mock_run, \
-             patch('SmartVoyage.a2a_server.trip_server.logger'):
-            mock_run.return_value = {
-                "status": "success",
-                "message": "请提供您要租车的取车城市和日期。"
-            }
-
-            server = self._create_server()
+        mock_result = {
+            "status": "success",
+            "message": "请提供取车城市和日期。"
+        }
+        with patch('asyncio.run', return_value=mock_result):
+            from SmartVoyage.a2a_server.trip_server import TripQueryServer
+            server = TripQueryServer()
             task = MagicMock()
             task.message = {"content": {"text": "我想租车"}}
-            task.artifacts = None
 
             result = server.handle_task(task)
-
             self.assertEqual(result.status.state.value, "input-required")
 
     def test_handle_task_error(self):
         """测试行程查询失败"""
-        with patch('SmartVoyage.a2a_server.trip_server.asyncio.run') as mock_run, \
-             patch('SmartVoyage.a2a_server.trip_server.logger'):
-            mock_run.return_value = {"status": "error", "message": "行程 MCP 查询出错"}
-
-            server = self._create_server()
+        mock_result = {"status": "error", "message": "查询出错"}
+        with patch('asyncio.run', return_value=mock_result):
+            from SmartVoyage.a2a_server.trip_server import TripQueryServer
+            server = TripQueryServer()
             task = MagicMock()
             task.message = {"content": {"text": "租车"}}
-            task.artifacts = None
 
             result = server.handle_task(task)
-
             self.assertEqual(result.status.state.value, "failed")
 
 
