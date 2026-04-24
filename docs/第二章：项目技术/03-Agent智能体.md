@@ -8,7 +8,7 @@
 
 ------
 
-## 1 什么是 Agent 
+## 一、什么是 Agent 
 
 一个 **Agent**，简单来说，就是一个能够**感知环境、做出决策并采取行动来完成特定目标**的“智能体”。
 
@@ -16,7 +16,7 @@
 
 
 
-## 2 什么是Agentic
+## 二、什么是Agentic
 
 Agentic 是一个形容词，它描述的是一个系统所表现出的“ **像 Agent 一样的程度** ”。
 一个系统越是 Agentic，它就越表现出自主性、目标导向性和主动性。它不是一个具体的实体，而是一种行为模式或设计思想。
@@ -36,9 +36,9 @@ Agentic 是一个形容词，它描述的是一个系统所表现出的“ **像
 
 ![image-20251023220201955](03-Agent智能体.assets/image-20251023220201955.png)
 
-## 3 Agent五种模式
+## 三、Agent五种模式
 
-### 3.1 ⼯具使⽤模式（Tool use pattern）
+### 1 ⼯具使⽤模式（Tool use pattern）
 
 **核心精髓：** 工具使用模式可以看作是 **ReAct 模式的前身或简化版**。它允许 Agent 调用外部工具来弥补自身知识的不足，但通常缺乏 ReAct 模式中那种细致入微的“思考-行动-观察”循环。它的局限在于其推理能力较弱，通常只适用于单步、直接的任务，缺乏动态调整和迭代的能力。
 
@@ -56,7 +56,7 @@ Agentic 是一个形容词，它描述的是一个系统所表现出的“ **像
 
 <img src="03-Agent智能体.assets/image-20251023220420013.png" alt="image-20251023220420013" style="zoom: 50%;" />
 
-### 3.2 ReAct 模式 (ReAct Pattern)
+### 2 ReAct 模式 (ReAct Pattern)
 
 几乎所有高级的 Agent 模式都离不开一个核心思想——**ReAct (Reason + Act)**。这是 Agent 实现“思考”与“行动”循环的基础。
 
@@ -85,7 +85,7 @@ Agentic 是一个形容词，它描述的是一个系统所表现出的“ **像
 
 
 
-### 3.3 反思模式（Reflection pattern）
+### 3 反思模式（Reflection pattern）
 
 为了提高任务完成的质量，Agent 在完成一个步骤或整个任务后，会进行 **自我评估和反思** ，并根据反思结果进行修正。
 
@@ -109,7 +109,7 @@ Agentic 是一个形容词，它描述的是一个系统所表现出的“ **像
 
 <img src="03-Agent智能体.assets/image-20251023220954435.png" alt="image-20251023220954435" style="zoom:67%;" />
 
-### 3.4 规划模式（Planning Pattern）
+### 4 规划模式（Planning Pattern）
 
 当任务非常复杂，无法通过简单的 ReAct 循环一步到位时，Agent 需要先进行 **宏观规划** 。
 
@@ -128,7 +128,7 @@ Agentic 是一个形容词，它描述的是一个系统所表现出的“ **像
 
 <img src="03-Agent智能体.assets/image-20251023221055861.png" alt="image-20251023221055861" style="zoom:67%;" />
 
-### 3.5 多智能体模式 (Multi-agent Pattern)
+### 5 多智能体模式 (Multi-agent Pattern)
 
 对于极其复杂的系统性任务，单个 Agent 可能难以胜任。这时，可以设计多个具有不同角色和能力的 Agent，让它们协同工作。
 
@@ -151,7 +151,7 @@ Agentic 是一个形容词，它描述的是一个系统所表现出的“ **像
 
 
 
-### 3.6 Agent 模式的演进关系
+### 6 Agent 模式的演进关系
 
 上述5种模式构成了一个从简单到复杂的演进阶梯：
 
@@ -172,9 +172,9 @@ Agentic 是一个形容词，它描述的是一个系统所表现出的“ **像
 
 
 
-## 4 代码实战
+## 四、代码实战
 
-### 4.1 工具使用模式
+### 1 工具使用模式
 
 位置：agent_learn/agent_types/C01_ToolUsePattern.py
 
@@ -252,7 +252,7 @@ if __name__ == "__main__":
 
 
 
-### 4.2 ReAct模式
+### 2 ReAct模式
 
 位置：agent_learn/agent_types/C02_ReActPattern.py
 
@@ -367,7 +367,7 @@ if __name__ == "__main__":
 
 
 
-### 4.3 反思模式
+### 3 反思模式
 
 位置：agent_learn/agent_types/C03_ReflectionPattern.py
 
@@ -445,7 +445,7 @@ if __name__ == "__main__":
     reflect_and_refine(initial_question, user_feedback_text)
 ```
 
-### 4.4 规划模式
+### 4 规划模式
 
 位置：agent_learn/agent_types/C04_PlanningPattern.py
 
@@ -583,7 +583,7 @@ if __name__ == "__main__":
 
 
 
-### 4.5 多智能体模式
+### 5 多智能体模式
 
 位置：agent_learn/agent_types/C05_MultiAgent.py
 
