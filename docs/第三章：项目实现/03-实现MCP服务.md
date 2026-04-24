@@ -14,6 +14,8 @@
 
 * 掌握集成测试方法：直接调用 Service 类验证数据库交互
 
+* 了解单元测试与集成测试的区别，以及 unittest 框架的基本用法
+
 
 
 ## 一、天气 MCP 服务器
@@ -569,6 +571,98 @@ def create_trip_mcp_server():
 
 
 ## 四、MCP 服务器测试
+
+### 0 测试基础知识
+
+在编写测试代码之前，先了解三个基本概念：**单元测试**、**集成测试**和 **unittest 框架**。
+
+#### （1）什么是单元测试
+
+单元测试（Unit Test）是对代码中**最小可测试单元**（通常是单个函数、方法或类）进行验证的测试方式。它的特点：
+
+- **独立性强**：只测一个功能点，不依赖外部系统（数据库、网络、第三方服务）
+- **运行快**：通常在毫秒级别完成
+- **定位准**：测试失败时能快速定位到具体问题
+
+本项目中的**格式编码测试**就是典型的单元测试 —— 只验证 `default_encoder` 函数能否正确转换 `datetime`、`Decimal` 等类型，不需要连接数据库或启动服务器。
+
+```python
+# 单元测试示例：验证 datetime 编码
+def test_encode_datetime(self):
+    dt = datetime(2025, 7, 30, 14, 30, 0)
+    result = self.default_encoder_func(dt)
+    self.assertEqual(result, '2025-07-30 14:30:00')
+```
+
+#### （2）什么是集成测试
+
+集成测试（Integration Test）用于验证**多个组件协同工作**是否正确。它的特点：
+
+- **需要真实环境**：依赖数据库、外部服务、网络等
+- **覆盖面广**：能发现单元测试无法捕获的问题（如 SQL 拼接错误、数据格式不匹配）
+- **运行较慢**：涉及 I/O 操作
+
+本项目中的 **MCP 服务器集成测试**就是典型例子 —— 直接实例化 `WeatherService`，调用其 `query_weather` 方法，验证与 MySQL 数据库的真实交互：
+
+```python
+# 集成测试示例：验证数据库查询
+def test_query_weather_single_day(self):
+    result = self.service.query_weather("北京", "2025-07-30")
+    parsed = json.loads(result)
+    self.assertEqual(parsed["status"], "success")
+    self.assertEqual(parsed["data"][0]["city"], "北京")
+```
+
+#### （3）unittest 框架
+
+`unittest` 是 Python 标准库自带的测试框架，核心概念：
+
+| 概念 | 说明 |
+|------|------|
+| `TestCase` | 测试用例类，继承 `unittest.TestCase`，包含多个测试方法 |
+| `test_xxx` | 以 `test_` 开头的方法会被自动识别为测试用例 |
+| `assertEqual` | 断言方法，验证两个值是否相等，失败时抛出异常 |
+| `assertTrue` / `assertFalse` | 断言布尔条件是否为真 / 假 |
+| `assertGreater` | 断言前者大于后者 |
+| `assertIn` | 断言前者包含在后者中 |
+| `setUp` | 每个测试方法运行前执行，用于准备测试环境 |
+| `setUpClass` | 类级别初始化，只在类创建时执行一次（常用在集成测试中创建数据库连接） |
+
+```python
+import unittest
+
+class TestExample(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        """类级别初始化，只执行一次"""
+        cls.service = SomeService()
+
+    def setUp(self):
+        """每个测试方法运行前执行"""
+        pass
+
+    def test_something(self):
+        self.assertEqual(1 + 1, 2)       # 相等断言
+        self.assertTrue(True)             # 布尔断言
+        self.assertGreater(5, 3)          # 大小断言
+        self.assertIn("a", ["a", "b"])    # 包含断言
+```
+
+运行方式：
+
+```bash
+# 运行整个测试模块
+python -m tests.test_mcp_servers
+
+# 运行单个测试类
+python -m unittest tests.test_mcp_servers.TestFormatEncoder
+
+# 运行单个测试方法
+python -m unittest tests.test_mcp_servers.TestFormatEncoder.test_encode_date
+```
+
+---
 
 ### 1 格式编码测试（纯函数，零依赖）
 
