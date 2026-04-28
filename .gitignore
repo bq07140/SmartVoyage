@@ -1,0 +1,53 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ===== 虚拟环境 =====
+venv/
+env/
+.env
+.venv
+ENV/
+lang_env/
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# ===== 日志 =====
+logs/
+*.log
+
+# ===== 敏感配置（不上传真实密钥）=====
+.env.local
+.env.production
+secrets.py
+config.py          # 含真实密码，用 config.example.py 代替
+
+# ===== 数据库文件 =====
+*.db
+*.sqlite3
+
+# ===== 测试缓存 =====
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 打包文件 =====
+dist/
+build/
+*.egg-info/
