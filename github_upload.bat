@@ -1,63 +1,47 @@
 @echo off
 chcp 65001 >nul
 echo ========================================
-echo  SmartVoyage 上传 GitHub 脚本
+echo  SmartVoyage 推送到 GitHub
 echo ========================================
+echo.
+echo  准备工作已全部完成：
+echo  - commit 已提交（76 个文件）
+echo  - .gitignore 和 config.example.py 已就绪
+echo  - origin 已指向 GitHub
 echo.
 
 cd /d D:\claude_projects\SmartVoyage
 
-REM ── 第1步：清除锁文件 ──
-echo [1/6] 清除 git 锁文件...
-if exist .git\index.lock (
-    del /f .git\index.lock
-    echo       锁文件已删除
-) else (
-    echo       无锁文件，跳过
-)
+REM ── 清除残留锁文件 ──
+if exist .git\index.lock  del /f .git\index.lock
+if exist .git\config.lock del /f .git\config.lock
+if exist .git\HEAD.lock   del /f .git\HEAD.lock
 
-REM ── 第2步：让 config.py 不再被 git 追踪（文件本地保留）──
+REM ── 确认远程地址 ──
+echo [检查] 当前远程仓库：
+git remote -v
 echo.
-echo [2/6] 从 git 追踪中移除 config.py（本地文件保留不删除）...
-git rm --cached config.py 2>nul
-if %errorlevel% equ 0 (
-    echo       config.py 已从追踪中移除
-) else (
-    echo       config.py 未被追踪，跳过
-)
 
-REM ── 第3步：暂存所有变更 ──
+REM ── 推送到 GitHub ──
+echo [推送] 正在推送到 GitHub...
+echo       如弹出登录窗口，请用 GitHub 账号登录
+echo       或使用 Personal Access Token 作为密码
 echo.
-echo [3/6] 暂存所有变更...
-git add -A
-echo       暂存完成
-
-REM ── 第4步：提交 ──
-echo.
-echo [4/6] 提交变更...
-git commit -m "feat: 添加 .gitignore 和配置模板，整理项目结构，移除敏感配置"
-echo       提交完成
-
-REM ── 第5步：配置远程地址 ──
-echo.
-echo [5/6] 配置远程仓库地址...
-git remote rename origin gitee 2>nul
-echo       原 Gitee 远程已重命名为 gitee
-
-REM ⚠️ 请把下面这行的 YOUR_USERNAME 替换为你的 GitHub 用户名
-set GITHUB_USER=bq07140
-git remote add origin https://github.com/%GITHUB_USER%/SmartVoyage.git
-echo       GitHub 远程已添加：https://github.com/%GITHUB_USER%/SmartVoyage.git
-
-REM ── 第6步：推送 ──
-echo.
-echo [6/6] 推送到 GitHub...
-echo       (如弹出登录窗口，请用 GitHub 账号登录)
 git push -u origin master
 
-echo.
-echo ========================================
-echo  全部完成！
-echo  请前往 https://github.com/%GITHUB_USER%/SmartVoyage 查看
-echo ========================================
+if %errorlevel% equ 0 (
+    echo.
+    echo ========================================
+    echo  推送成功！
+    echo  请前往 https://github.com/bq07140/SmartVoyage 查看
+    echo ========================================
+) else (
+    echo.
+    echo ========================================
+    echo  推送失败，请检查：
+    echo  1. GitHub 用户名/密码（用 Token 作为密码）
+    echo  2. 仓库 https://github.com/bq07140/SmartVoyage 已创建
+    echo  3. 网络是否可以访问 GitHub
+    echo ========================================
+)
 pause
