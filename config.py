@@ -21,14 +21,15 @@ project_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 # env = "prod"
 # 测试环境
 env = "test"
+
+
 # 开发环境
 # env = "dev"
 # 预生产环境
 # env = "pre_prod"
 
 
-
-#定义配置文件
+# 定义配置文件
 class Config:
 
     def __init__(self):
@@ -39,8 +40,8 @@ class Config:
 
         # 数据库配置
         self.host = 'localhost'
-        self.user = 'smart_yoyage'
-        self.password = '123456' # 不是root
+        self.user = 'root'
+        self.password = '123456'  # 不是root
         self.database = 'travel_rag'
 
         # 日志配置
@@ -68,8 +69,7 @@ class Config:
         # 使用 "api" 时，需要确保和风 API 密钥（spider_weather.py 中的 API_KEY）有效
         self.weather_source = "api"
 
-
-    def get_mysql_config(self,env):
+    def get_mysql_config(self, env):
         """
         通过不同的环境获取不同的数据库配置
         :return:

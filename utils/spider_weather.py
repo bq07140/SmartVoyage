@@ -21,28 +21,29 @@ import gzip
 import pytz
 
 # 配置
-API_KEY = "5ef0a47e161a4ea997227322317eae83"
+API_KEY = "fe4ecfc532fa4de0bf84a20b30db7d52"
 city_codes = {
     "北京": "101010100",
     "上海": "101020100",
     "杭州": "101280101",
     "南京": "101190101",
 }
-BASE_URL = "https://m7487r6ych.re.qweatherapi.com/v7/weather/30d"
+BASE_URL = "https://n94bjbmfte.re.qweatherapi.com/v7/weather/7d"
 TZ = pytz.timezone('Asia/Shanghai')  # 使用上海时区
-
 
 # MySQL 配置
 db_config = {
     "host": "localhost",
-    "user": "smart_yoyage",
+    "user": "root",
     "password": "123456",
     "database": "travel_rag",
     "charset": "utf8mb4"
 }
 
+
 def connect_db():
     return mysql.connector.connect(**db_config)
+
 
 def fetch_weather_data(city, location):
     """
@@ -63,16 +64,16 @@ def fetch_weather_data(city, location):
         print(response)
         # <Response [200]>
         response.raise_for_status()
-        print(222222222,response.raise_for_status())
+        print(222222222, response.raise_for_status())
         # 222222222 None
-        print(11111111,response.headers.get('Content-Encoding'))
+        print(11111111, response.headers.get('Content-Encoding'))
         # 11111111 gzip
         if response.headers.get('Content-Encoding') == 'gzip':
             print("gzip")
             # gzip
             # 使用.decompress方法时候报错了
             data = gzip.decompress(response.content).decode('utf-8')
-            print(1111,data)
+            print(1111, data)
         else:
             data = response.text
 
@@ -88,6 +89,7 @@ def fetch_weather_data(city, location):
         print(f"{city} 数据未正确解压，尝试直接解析: {response.text[:500]}...")
         return json.loads(response.text) if response.text else None
 
+
 def get_latest_update_time(cursor, city):
     """
     拿取 这个 城市city 在数据表weather_data中最新更新时间。
@@ -98,6 +100,7 @@ def get_latest_update_time(cursor, city):
     cursor.execute("SELECT MAX(update_time) FROM weather_data WHERE city = %s", (city,))
     result = cursor.fetchone()
     return result[0] if result[0] else None
+
 
 def should_update_data(latest_time, force_update=False):
     """
@@ -114,6 +117,7 @@ def should_update_data(latest_time, force_update=False):
     current_time = datetime.now(TZ)
     latest_time = latest_time.replace(tzinfo=TZ)
     return (current_time - latest_time).total_seconds() / 3600 >= 24
+
 
 def store_weather_data(conn, cursor, city, data):
     """
@@ -199,6 +203,7 @@ def store_weather_data(conn, cursor, city, data):
             conn.rollback()
             print(f"{city} 事务回滚。")
 
+
 def update_weather(force_update=False):
     """
 
@@ -232,12 +237,16 @@ def update_weather(force_update=False):
     cursor.close()
     conn.close()
 
+
 def setup_scheduler():
+
+
     # 北京时间 1:00 对应 PDT 前一天的 16:00（夏令时）
     schedule.every().day.at("16:00").do(update_weather)
     while True:
         schedule.run_pending()
         time.sleep(60)
+
 
 if __name__ == "__main__":
     # 初始检查和更新
@@ -297,7 +306,6 @@ if __name__ == "__main__":
 # 以上是第一种方式
 # 其他方式：
 # 从redis中查，有就用，没有就查第三方api，缓存redis，设置ttl=1小时。
-
 
 
 # {"code":"200",

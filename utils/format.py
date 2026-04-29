@@ -23,6 +23,7 @@ def default_encoder(obj):  # 定义编码器方法，用于格式化单个对象
         return float(obj)
     return obj  # 否则返回原对象
 
+
 # 定义自定义JSON编码器类，继承自json.JSONEncoder，用于处理非标准类型序列化
 class DateEncoder(json.JSONEncoder):
     def default(self, obj):  # 重写default方法，处理序列化时的默认对象转换
@@ -33,3 +34,6 @@ class DateEncoder(json.JSONEncoder):
         if isinstance(obj, Decimal):  # 检查对象是否为Decimal类型，将Decimal转换为浮点数以兼容JSON
             return float(obj)
         return super().default(obj)  # 对于其他类型，调用父类默认方法
+
+
+
