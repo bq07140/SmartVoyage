@@ -1,19 +1,10 @@
-"""
-需求：实现基于MCP的票务查询与预定服务器，提供火车票、机票和演唱会票的查询及预定功能
-思路步骤：
-1. 导入必要的模块和库
-2. 初始化配置和日志记录器
-3. 创建TicketService类（封装数据库操作逻辑）
-4. 实现参数化查询方法（query_train、query_flight、query_concert）
-5. 定义三个票务预定工具函数
-6. 创建create_ticket_mcp_server函数（创建MCP服务器，注册所有工具）
-7. 主函数（启动MCP服务器）
-"""
 import mysql.connector
 import json
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from mcp.server.fastmcp import FastMCP
+# from mcp.server.fastmcp import FastMCP
+from python_a2a import FastMCP, create_fastapi_app
+import uvicorn
 
 from SmartVoyage.config import Config
 from SmartVoyage.create_logger import logger
@@ -90,10 +81,14 @@ class TicketService:
 # 创建票务MCP服务器
 def create_ticket_mcp_server():
     # 创建FastMCP实例
-    ticket_mcp = FastMCP(name="TicketTools",
-                         instructions="票务查询与预定工具，基于 train_tickets, flight_tickets, concert_tickets 表。支持查询和预定。",
-                         log_level="ERROR",
-                         host="127.0.0.1", port=8001)
+    # ticket_mcp = FastMCP(name="TicketTools",
+    #                      instructions="票务查询与预定工具，基于 train_tickets, flight_tickets, concert_tickets 表。支持查询和预定。",
+    #                      log_level="ERROR",
+    #                      host="127.0.0.1", port=8001)
+
+    ticket_mcp = FastMCP(
+        name="TicketTools"
+    )
 
     # 实例化票务服务对象
     service = TicketService()
@@ -152,12 +147,16 @@ def create_ticket_mcp_server():
     # 打印服务器信息
     logger.info("=== 票务MCP服务器信息 ===")
     logger.info(f"名称: {ticket_mcp.name}")
-    logger.info(f"描述: {ticket_mcp.instructions}")
+    # logger.info(f"描述: {ticket_mcp.description}")
 
     # 运行服务器
     try:
         print("服务器已启动，请访问 http://127.0.0.1:8001/mcp")
-        ticket_mcp.run(transport="streamable-http")
+        # ticket_mcp.run(transport="streamable-http")
+
+        ticket_mcp_server = create_fastapi_app(ticket_mcp)
+        uvicorn.run(ticket_mcp_server, host='0.0.0.0', port=8001)
+
     except Exception as e:
         print(f"服务器启动失败: {e}")
 

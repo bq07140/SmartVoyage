@@ -21,6 +21,7 @@ def default_encoder(obj):  # 定义编码器方法，用于格式化单个对象
     if isinstance(obj, Decimal):  # 检查是否为Decimal，转换为浮点数
         # TODO 更优的方案 str(obj)
         return float(obj)
+        # return str(obj)  # 更好
     return obj  # 否则返回原对象
 
 

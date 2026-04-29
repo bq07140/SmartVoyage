@@ -1,26 +1,13 @@
-"""
-需求：实现基于MCP的天气查询服务器，提供参数化的天气查询工具
-
-架构说明：
-    MCP Server 提供带明确参数的 tool 函数（city、start_date、end_date），
-    内部根据配置项 `conf.weather_source` 决定数据来源：
-    - "database"：从 MySQL 数据库查询（需要 spider_weather.py 定时更新）
-    - "api"：直接从和风天气 API 实时获取（无需数据库）
-
-    与票务 MCP（mcp_ticket_server.py）保持一致的架构模式：
-    - MCP Server 提供带明确参数的 tool 函数
-    - A2A server 使用 LangChain Agent + MCP Tools，让 LLM 自动从用户输入中提取参数
-"""
-
-# ==================== 导入依赖 ====================
 import mysql.connector  # MySQL 数据库驱动
 import json  # JSON 处理，用于序列化查询结果
 from datetime import date, datetime, timedelta  # 时间处理
 from decimal import Decimal  # 高精度小数类型
 import gzip  # gzip 解压，和风 API 返回 gzip 压缩数据
 import requests  # HTTP 请求库，用于调用和风天气 API
+import uvicorn
 
-from mcp.server.fastmcp import FastMCP  # FastMCP 框架，快速创建 MCP 服务器
+# from mcp.server.fastmcp import FastMCP  # FastMCP 框架，快速创建 MCP 服务器
+from python_a2a import FastMCP, create_fastapi_app
 
 from SmartVoyage.config import Config  # 项目配置（数据库连接信息、天气数据源配置等）
 from SmartVoyage.create_logger import logger  # 日志模块
@@ -31,9 +18,9 @@ conf = Config()  # 全局配置实例
 
 # ==================== 和风天气 API 配置 ====================
 # 和风天气 API 密钥（与 spider_weather.py 共用）
-HEFENG_API_KEY = "5ef0a47e161a4ea997227322317eae83"
+HEFENG_API_KEY = "fe4ecfc532fa4de0bf84a20b30db7d52"
 # 和风天气 API 基础地址
-HEFENG_BASE_URL = "https://m7487r6ych.re.qweatherapi.com/v7/weather/30d"
+HEFENG_BASE_URL = "https://n94bjbmfte.re.qweatherapi.com/v7/weather/30d"
 
 # 城市名称到和风城市代码的映射
 # 和风 API 使用城市代码而不是城市名称来查询天气
@@ -48,23 +35,6 @@ CITY_CODES = {
 
 
 def fetch_weather_from_api(city: str, start_date: str, end_date: str = None) -> str:
-    """
-    直接从和风天气 API 获取天气数据
-
-    当配置中 weather_source = "api" 时使用。
-    调用和风天气 API 获取指定城市和日期范围的天气预报数据。
-
-    参数：
-        city (str): 城市名称，如 "北京"
-        start_date (str): 开始日期，格式 YYYY-MM-DD
-        end_date (str, optional): 结束日期，格式 YYYY-MM-DD
-
-    返回值：
-        str: JSON 字符串，格式与数据库查询保持一致：
-            - {"status": "success", "data": [...]}  # 查询成功
-            - {"status": "no_data", "message": "..."}  # 无数据
-            - {"status": "error", "message": "..."}  # 执行出错
-    """
     # 检查城市代码是否存在
     location = CITY_CODES.get(city)
     if not location:
@@ -177,16 +147,6 @@ def fetch_weather_from_api(city: str, start_date: str, end_date: str = None) -> 
 
 # ==================== 天气服务类（数据库模式） ====================
 class WeatherService:
-    """
-    天气查询服务类（数据库模式），封装数据库操作逻辑
-
-    当配置中 weather_source = "database" 时使用。
-    负责：
-    1. 维护数据库连接
-    2. 提供参数化的查询方法（由参数自动拼接 SQL）
-    3. 格式化查询结果为 JSON 返回
-    """
-
     def __init__(self):
         # 建立数据库连接
         self.conn = mysql.connector.connect(
@@ -197,21 +157,6 @@ class WeatherService:
         )
 
     def execute_query(self, sql: str, params: list = None) -> str:
-        """
-        执行 SQL 查询，返回 JSON 格式的结果
-
-        使用参数化查询（params 参数）防止 SQL 注入。
-
-        参数：
-            sql (str): SQL 查询语句，使用 %s 占位符
-            params (list): SQL 参数列表，对应 %s 占位符
-
-        返回值：
-            str: JSON 字符串，格式为以下之一：
-                - {"status": "success", "data": [...]}  # 查询成功
-                - {"status": "no_data", "message": "..."}  # 无数据
-                - {"status": "error", "message": "..."}  # 执行出错
-        """
         try:
             # 使用 dictionary=True，返回的结果每一行是一个字典（字段名为 key）
             cursor = self.conn.cursor(dictionary=True)
@@ -238,21 +183,6 @@ class WeatherService:
             return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def query_weather(self, city: str, start_date: str, end_date: str = None) -> str:
-        """
-        参数化天气查询（数据库模式）—— 根据城市和日期范围查询天气数据
-
-        接收结构化的参数，由 MCP Server 内部拼接 SQL，保证安全性。
-
-        参数：
-            city (str): 城市名称，如 "北京"
-            start_date (str): 开始日期，格式 YYYY-MM-DD，如 "2025-07-30"
-            end_date (str, optional): 结束日期，格式 YYYY-MM-DD
-                                     如果为 None，则只查询 start_date 当天
-                                     如果不为 None，则查询 start_date 到 end_date 的范围
-
-        返回值：
-            str: JSON 字符串，包含天气数据
-        """
         # 基础查询字段：选择用户最常关心的天气信息
         sql = (
             "SELECT city, fx_date, temp_max, temp_min, text_day, text_night, "
@@ -279,19 +209,16 @@ class WeatherService:
 
 # ==================== 创建 MCP 服务器 ====================
 def create_weather_mcp_server():
-    """
-    创建并启动天气查询 MCP 服务器
-
-    根据配置项 conf.weather_source 决定使用哪种数据源：
-    - "database"：使用 WeatherService 从数据库查询
-    - "api"：直接从和风天气 API 获取
-    """
     # 创建 FastMCP 实例（MCP 服务器）
+    # weather_mcp = FastMCP(
+    #     name="WeatherTools",
+    #     instructions="天气查询工具，支持参数化查询。数据来源可配置（数据库或和风API）。",
+    #     log_level="ERROR",
+    #     host="127.0.0.1", port=8002
+    # )
+
     weather_mcp = FastMCP(
-        name="WeatherTools",
-        instructions="天气查询工具，支持参数化查询。数据来源可配置（数据库或和风API）。",
-        log_level="ERROR",
-        host="127.0.0.1", port=8002
+        name="WeatherTools"
     )
 
     # 实例化数据库模式的天气服务（仅在 database 模式下使用）
@@ -309,27 +236,6 @@ def create_weather_mcp_server():
         )
     )
     def query_weather(city: str, start_date: str, end_date: str = None) -> str:
-        """
-        MCP 工具：参数化天气查询
-
-        这个工具会被 LangChain Agent 自动调用。
-        Agent 从用户的自然语言输入中提取参数，然后传给这个函数。
-
-        内部根据配置项 conf.weather_source 决定数据来源：
-        - "database"：从 MySQL 数据库查询
-        - "api"：直接从和风天气 API 实时获取
-
-        参数：
-            city (str): 城市名称，如 "北京"、"上海"
-            start_date (str): 开始日期，格式 YYYY-MM-DD
-            end_date (str, optional): 结束日期，格式 YYYY-MM-DD（可选）
-
-        返回值：
-            str: JSON 字符串，格式统一为：
-                {"status": "success", "data": [...]}  # 查询成功
-                {"status": "no_data", "message": "..."}  # 无数据
-                {"status": "error", "message": "..."}  # 执行出错
-        """
         logger.info(f"执行天气查询: city={city}, start_date={start_date}, end_date={end_date}, 数据源={conf.weather_source}")
 
         if conf.weather_source == "api":
@@ -344,12 +250,16 @@ def create_weather_mcp_server():
     # 打印服务器信息
     logger.info("=== 天气MCP服务器信息 ===")
     logger.info(f"名称: {weather_mcp.name}")
-    logger.info(f"描述: {weather_mcp.instructions}")
+    # logger.info(f"描述: {weather_mcp.description}")
 
     # 启动服务器
     try:
+        # weather_mcp.run(transport="streamable-http")
+
         print("服务器已启动，请访问 http://127.0.0.1:8002/mcp")
-        weather_mcp.run(transport="streamable-http")
+        weather_mcp_server = create_fastapi_app(weather_mcp)
+        uvicorn.run(weather_mcp_server, host='0.0.0.0', port=8002)
+
     except Exception as e:
         print(f"服务器启动失败: {e}")
 

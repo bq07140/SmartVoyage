@@ -19,6 +19,10 @@ import time
 import json
 import gzip
 import pytz
+from SmartVoyage.config import Config  # 项目配置（数据库连接信息、天气数据源配置等）
+
+conf = Config()  # 全局配置实例
+
 
 # 配置
 API_KEY = "fe4ecfc532fa4de0bf84a20b30db7d52"
@@ -240,6 +244,8 @@ def update_weather(force_update=False):
 
 def setup_scheduler():
 
+    # if conf.weather_source == 'api':
+    #     return
 
     # 北京时间 1:00 对应 PDT 前一天的 16:00（夏令时）
     schedule.every().day.at("16:00").do(update_weather)
