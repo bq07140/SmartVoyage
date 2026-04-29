@@ -35,7 +35,7 @@ class Config:
     def __init__(self):
         # 大模型配置
         self.base_url = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-        self.api_key = os.getenv("DASHSCOPE_API_KEY")
+        self.api_key = os.getenv("DASHSCOPE_API_KEY", "sk-4e52780bc4fb4497952360499a5503cf")
         self.model_name = 'qwen3.6-plus'
 
         # 数据库配置

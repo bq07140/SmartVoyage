@@ -28,10 +28,8 @@ EMBEDDING_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
 def get_embedding(text: str) -> list:
     """
     调用 Qwen Embedding API 生成文本向量
-
     参数：
         text (str): 需要生成向量的文本
-
     返回值：
         list: 1024 维向量
     """
@@ -46,6 +44,8 @@ def get_embedding(text: str) -> list:
     }
     response = requests.post(EMBEDDING_URL, headers=headers, json=payload, timeout=30)
     result = response.json()
+    if "data" not in result:
+        raise ValueError(f"Embedding API 返回错误: {result}")
     return result["data"][0]["embedding"]
 
 
@@ -446,12 +446,12 @@ def insert_tour_groups(collection):
     print(f"成功插入 {len(TOUR_GROUPS)} 个旅游团数据")
 
 
-def test_search(collection):
+def verify_search(collection):
     """
-    测试语义搜索：用自然语言查询旅游团
+    验证语义搜索：用自然语言查询旅游团
     """
-    # 测试查询
-    test_queries = [
+    # 验证查询
+    sample_queries = [
         "我想去一个有雪山的地方，最好能看日出",
         "适合亲子游的短途旅行",
         "美食之旅，想吃火锅和特色小吃",
@@ -459,8 +459,8 @@ def test_search(collection):
         "文化古迹，想看兵马俑和古城墙",
     ]
 
-    print("\n=== 语义搜索测试 ===")
-    for query in test_queries:
+    print("\n=== 语义搜索验证 ===")
+    for query in sample_queries:
         print(f"\n查询: {query}")
         query_embedding = get_embedding(query)
 
@@ -484,4 +484,4 @@ def test_search(collection):
 if __name__ == '__main__':
     collection = create_tour_group_collection()
     insert_tour_groups(collection)
-    test_search(collection)
+    verify_search(collection)

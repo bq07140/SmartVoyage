@@ -1,33 +1,13 @@
-"""
-需求：实现基于MCP的行程管家服务器，提供租车、旅游团、保险的查询及预订功能
-
-架构说明：
-    本服务器是 SmartVoyage 系统中的另一个 MCP 服务器，运行在 8003 端口。
-    与 mcp_ticket_server.py 保持一致的架构模式，但采用了混合数据源：
-
-    - 租车查询：从 MySQL car_rentals 表真实查询
-    - 保险查询：从 MySQL insurances 表真实查询
-    - 旅游团查询：从 Milvus 向量数据库进行语义检索（RAG 模式）
-    - 预订功能：模拟返回（待后续完善）
-
-    旅游团 RAG 系统说明：
-    - 使用 Milvus 本地向量数据库存储旅游团信息
-    - 旅游团数据在初始化时通过 Qwen Embedding API 生成 1024 维向量
-    - 用户查询时，将查询文本也生成向量，通过 COSINE 相似度匹配最相关的旅游团
-    - 优势：用户可以用自然语言描述需求（如"想看雪山的地方"），系统自动匹配最合适的旅游团
-"""
-
 # ==================== 导入依赖 ====================
 import json  # JSON 处理
 from datetime import date, datetime, timedelta  # 时间处理
 from decimal import Decimal  # 高精度小数类型
 import requests  # HTTP 请求，用于调用 Qwen Embedding API
-
 import mysql.connector  # MySQL 数据库驱动
 from pymilvus import connections, Collection  # Milvus 向量数据库客户端
-
-from mcp.server.fastmcp import FastMCP  # FastMCP 框架，快速创建 MCP 服务器
-
+# from mcp.server.fastmcp import FastMCP  # FastMCP 框架，快速创建 MCP 服务器
+from python_a2a import FastMCP, create_fastapi_app
+import uvicorn
 
 from SmartVoyage.config import Config  # 项目配置
 from SmartVoyage.create_logger import logger  # 日志模块
@@ -275,17 +255,20 @@ def create_trip_mcp_server():
     """
     创建并启动行程管家 MCP 服务器
     """
+    # trip_mcp = FastMCP(
+    #     name="TripTools",
+    #     instructions="行程管家工具。租车和保险通过 MySQL 查询，旅游团通过 Milvus 语义检索。支持查询和预订。",
+    #     log_level="ERROR",
+    #     host="127.0.0.1", port=8003
+    # )
+
     trip_mcp = FastMCP(
-        name="TripTools",
-        instructions="行程管家工具。租车和保险通过 MySQL 查询，旅游团通过 Milvus 语义检索。支持查询和预订。",
-        log_level="ERROR",
-        host="127.0.0.1", port=8003
+        name="TripTools"
     )
 
     service = TripService()
 
     # ========== 注册查询工具 ==========
-
     @trip_mcp.tool(
         name="query_car_rental",
         description="查询租车信息，参数：pickup_city(取车城市), return_city(还车城市), date(日期，格式YYYY-MM-DD), car_type(车型类型，可选：经济型/SUV/豪华型/MPV)"
@@ -336,14 +319,22 @@ def create_trip_mcp_server():
     # 打印服务器信息
     logger.info("=== 行程管家MCP服务器信息 ===")
     logger.info(f"名称: {trip_mcp.name}")
-    logger.info(f"描述: {trip_mcp.instructions}")
+    # logger.info(f"描述: {trip_mcp.instructions}")
 
     try:
         print("服务器已启动，请访问 http://127.0.0.1:8003/mcp")
-        trip_mcp.run(transport="streamable-http")
+        # trip_mcp.run(transport="streamable-http")
+
+        trip_mcp_server = create_fastapi_app(trip_mcp)
+        uvicorn.run(trip_mcp_server, host='0.0.0.0', port=8003)
+
     except Exception as e:
         print(f"服务器启动失败: {e}")
 
 
 if __name__ == '__main__':
     create_trip_mcp_server()
+
+
+
+
